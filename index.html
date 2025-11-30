@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TS20 Asistencia & QR</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Librerías externas -->
+  <!-- Lector de QR -->
+  <script src="https://unpkg.com/html5-qrcode" defer></script>
+  <!-- Generador de QR para tarjetas -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+  <!-- Leer / escribir Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+
+  <!-- Lógica de la app -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- OVERLAY CONFIG INICIAL -->
+  <div id="configOverlay" class="config-overlay">
+    <div class="config-card">
+      <h2>Configura tu escuela</h2>
+
+      <label for="cfgEscuela">Nombre de la escuela</label>
+      <input type="text" id="cfgEscuela" placeholder="Telesecundaria Federal 20" />
+
+      <label for="cfgDocente">Nombre del docente</label>
+      <input type="text" id="cfgDocente" placeholder="Mtro. / Mtra. Nombre" />
+
+      <label for="cfgGrupos">Grupos que atiende (separados por comas)</label>
+      <input type="text" id="cfgGrupos" placeholder="1A, 2A, 2H, 3A" />
+
+      <div class="config-buttons">
+        <button id="btnConfigGuardar" class="btn-primary">Guardar configuración</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="app">
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="header-top">
+        <div class="avatar" id="avatarIniciales">TS</div>
+        <div class="header-titles">
+          <h1 id="tituloEscuela">Asistencia QR – Telesecundaria</h1>
+          <p id="subtituloEscuela">Docente: sin configurar</p>
+        </div>
+      </div>
+      <p class="header-subinfo" id="subinfoSistema">
+        Zona 01 · Sistema local con QR, trabajos y reportes
+      </p>
+    </header>
+
+    <!-- TARJETA HOY -->
+    <section class="dashboard-card">
+      <div class="dash-main">
+        <div class="dash-date">
+          <div class="dash-date-box">
+            <span id="dashDiaNumero">29</span>
+            <small id="dashDiaNombre">miércoles</small>
+          </div>
+        </div>
+        <div class="dash-info">
+          <p class="dash-title">Hoy</p>
+          <p class="dash-subtitle" id="dashSubtitulo">Sistema local con QR</p>
+          <p class="dash-text" id="dashResumen">
+            Grupo actual: sin seleccionar · 0 presentes · 0 trabajos entregados
+          </p>
+        </div>
+      </div>
+      <div class="dash-actions">
+        <button id="btnIrAsistencia" class="dash-action">
+          ✅ Tomar asistencia
+        </button>
+        <button id="btnIrTrabajos" class="dash-action">
+          📚 Registrar trabajos
+        </button>
+        <button id="btnIrListas" class="dash-action">
+          👥 Grupos y alumnos
+        </button>
+      </div>
+    </section>
+
+    <!-- TABS SUPERIORES -->
+    <nav class="tabs-nav">
+      <button class="tab-btn activo" data-tab="listas">1. Importar lista</button>
+      <button class="tab-btn" data-tab="qr">2. Tarjetas QR</button>
+      <button class="tab-btn" data-tab="asis">3. Asistencia</button>
+      <button class="tab-btn" data-tab="trab">4. Trabajos</button>
+    </nav>
+    <div class="tabs-indicator">
+      <div id="tabsIndicatorBar" class="indicator-bar"></div>
+    </div>
+
+    <!-- CONTENIDO DE TABS -->
+    <main class="tabs-container">
+
+      <!-- TAB LISTAS -->
+      <section id="tab-listas" class="tab-panel tab-activa">
+        <h2>1. Importar lista de alumnos</h2>
+        <p class="hint">
+          Formato por renglón:
+          <strong>GRUPO,NÚMERO_DE_LISTA,NOMBRE</strong><br />
+          Ejemplo: <code>2H,1,JUAN PÉREZ</code>
+        </p>
+
+        <label class="block-label" for="fileLista">
+          Subir archivo (.csv, .txt, .xlsx / .xls):
+        </label>
+        <input type="file" id="fileLista" accept=".csv,.txt,.xlsx,.xls" />
+
+        <p class="hint">
+          O pega directamente la lista aquí (una fila por alumno):
+        </p>
+        <textarea id="txtLista" rows="6" placeholder="2H,1,JUAN PÉREZ&#10;2H,2,MARIA LOPEZ"></textarea>
+
+        <p class="hint small">
+          Puedes copiar y pegar directamente desde Excel: columnas
+          <strong>GRUPO, NÚMERO DE LISTA y NOMBRE</strong>.
+        </p>
+
+        <div class="btn-row">
+          <button id="btnImportarAlumnos" class="btn-primary">Importar alumnos</button>
+          <button id="btnVerAlumnos" class="btn-secondary">Ver alumnos guardados</button>
+        </div>
+        <button id="btnBorrarAlumnos" class="btn-danger">Borrar todos los alumnos</button>
+
+        <div id="msgListas" class="mensaje"></div>
+
+        <div id="panelAlumnos" class="panel-lista oculto">
+          <h3>Alumnos guardados</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Grupo</th>
+                <th>Núm.</th>
+                <th>Nombre</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyAlumnos"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB TARJETAS QR -->
+      <section id="tab-qr" class="tab-panel">
+        <h2>2. Tarjetas QR</h2>
+        <p class="hint">
+          Selecciona el grupo para generar las tarjetas con código QR (asistencia y trabajos).
+        </p>
+
+        <label class="block-label" for="selGrupoTarjetas">Grupo:</label>
+        <select id="selGrupoTarjetas">
+          <option value="">Selecciona grupo…</option>
+        </select>
+
+        <div class="btn-row">
+          <button id="btnGenerarTarjetas" class="btn-primary">
+            Generar tarjetas (vista de impresión)
+          </button>
+          <button id="btnDescargarWord" class="btn-secondary">
+            Descargar tarjetas en Word
+          </button>
+        </div>
+
+        <div id="msgTarjetas" class="mensaje"></div>
+      </section>
+
+      <!-- TAB ASISTENCIA -->
+      <section id="tab-asis" class="tab-panel">
+        <h2>3. Tomar asistencia escaneando QR</h2>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label for="selGrupoAsis">Grupo:</label>
+            <select id="selGrupoAsis">
+              <option value="">Selecciona grupo…</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="fechaAsis">Fecha:</label>
+            <input type="date" id="fechaAsis" />
+          </div>
+        </div>
+
+        <label class="block-label" for="modoAsis">Modo de escaneo:</label>
+        <select id="modoAsis">
+          <option value="fila">Fila (uno por uno)</option>
+          <option value="pantalla">Pantalla (varios QRs seguidos)</option>
+        </select>
+
+        <div class="btn-row">
+          <button id="btnIniciarCamAsis" class="btn-primary">Iniciar cámara</button>
+          <button id="btnDetenerCamAsis" class="btn-secondary">Detener cámara</button>
+        </div>
+
+        <div id="lectorAsis" class="qr-viewer"></div>
+
+        <h3>Registro manual</h3>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="selAlumnoAsis">Alumno:</label>
+            <select id="selAlumnoAsis">
+              <option value="">Selecciona alumno…</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="estadoManualAsis">Estado:</label>
+            <select id="estadoManualAsis">
+              <option value="PRESENTE">Presente</option>
+              <option value="AUSENTE">Ausente</option>
+              <option value="RETARDO">Retardo</option>
+              <option value="JUSTIFICADO">Justificado</option>
+            </select>
+          </div>
+        </div>
+        <button id="btnRegistrarManualAsis" class="btn-primary">
+          Registrar manualmente
+        </button>
+
+        <div id="msgAsis" class="mensaje"></div>
+
+        <h3>Lista del grupo (día seleccionado)</h3>
+        <div class="btn-row">
+          <button id="btnExportarAsis" class="btn-secondary">
+            Exportar asistencia a Excel (día)
+          </button>
+        </div>
+
+        <div class="tabla-contenedor">
+          <table id="tablaAsis">
+            <thead>
+              <tr>
+                <th>Núm.</th>
+                <th>Nombre</th>
+                <th>Estado</th>
+                <th>Hora</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h3>Reporte por rango de fechas (asistencia)</h3>
+        <p class="hint small">
+          Genera un archivo de Excel con la asistencia del grupo entre dos fechas.
+        </p>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="fechaAsisIni">Desde:</label>
+            <input type="date" id="fechaAsisIni" />
+          </div>
+          <div class="form-field">
+            <label for="fechaAsisFin">Hasta:</label>
+            <input type="date" id="fechaAsisFin" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button id="btnExportarAsisRango" class="btn-secondary">
+            Exportar rango a Excel
+          </button>
+        </div>
+
+        <h3>Resumen por alumno (asistencia + trabajos)</h3>
+        <p class="hint small">
+          Genera un archivo Excel con dos hojas: asistencia y trabajos de un solo alumno en un rango de fechas.
+        </p>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="selGrupoResumen">Grupo:</label>
+            <select id="selGrupoResumen">
+              <option value="">Selecciona grupo…</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="selAlumnoResumen">Alumno:</label>
+            <select id="selAlumnoResumen">
+              <option value="">Selecciona alumno…</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="fechaResIni">Desde:</label>
+            <input type="date" id="fechaResIni" />
+          </div>
+          <div class="form-field">
+            <label for="fechaResFin">Hasta:</label>
+            <input type="date" id="fechaResFin" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button id="btnExportarResumenAlumno" class="btn-secondary">
+            Exportar resumen de alumno
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB TRABAJOS -->
+      <section id="tab-trab" class="tab-panel">
+        <h2>4. Registro de trabajos escaneando QR</h2>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label for="selGrupoTrab">Grupo:</label>
+            <select id="selGrupoTrab">
+              <option value="">Selecciona grupo…</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="fechaTrab">Fecha:</label>
+            <input type="date" id="fechaTrab" />
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button id="btnIniciarCamTrab" class="btn-primary">Iniciar cámara</button>
+          <button id="btnDetenerCamTrab" class="btn-secondary">Detener cámara</button>
+        </div>
+
+        <div id="lectorTrab" class="qr-viewer"></div>
+
+        <h3>Registro manual de trabajos</h3>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="selAlumnoTrab">Alumno:</label>
+            <select id="selAlumnoTrab">
+              <option value="">Selecciona alumno…</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="estadoManualTrab">Estado:</label>
+            <select id="estadoManualTrab">
+              <option value="ENTREGADO">Entregado</option>
+              <option value="NO_ENTREGADO">No entregó</option>
+            </select>
+          </div>
+        </div>
+        <button id="btnRegistrarManualTrab" class="btn-primary">
+          Registrar trabajo manualmente
+        </button>
+
+        <div id="msgTrab" class="mensaje"></div>
+
+        <h3>Lista del grupo (día seleccionado)</h3>
+        <div class="btn-row">
+          <button id="btnExportarTrab" class="btn-secondary">
+            Exportar trabajos a Excel (día)
+          </button>
+        </div>
+
+        <div class="tabla-contenedor">
+          <table id="tablaTrab">
+            <thead>
+              <tr>
+                <th>Núm.</th>
+                <th>Nombre</th>
+                <th>Entregado</th>
+                <th>Hora</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- NAV INFERIOR -->
+    <nav class="bottom-nav">
+      <button class="bottom-btn activo" data-tab="home">
+        🏠<span>Inicio</span>
+      </button>
+      <button class="bottom-btn" data-tab="listas">
+        📋<span>Listas</span>
+      </button>
+      <button class="bottom-btn" data-tab="asis">
+        ✅<span>Asistencia</span>
+      </button>
+      <button class="bottom-btn" data-tab="trab">
+        📚<span>Trabajos</span>
+      </button>
+    </nav>
+  </div>
+</body>
+</html>
