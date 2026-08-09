@@ -17,21 +17,30 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,19 +49,40 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import mx.direkta.liacleaner.model.AppCandidate
 import mx.direkta.liacleaner.model.Recommendation
-
-private val demoApps = listOf(
-    AppCandidate("Facebook Lite", "com.facebook.lite", "1.2 GB", 143, Recommendation.REMOVE),
-    AppCandidate("Booking", "com.booking", "486 MB", 197, Recommendation.REMOVE),
-    AppCandidate("Google Maps", "com.google.android.apps.maps", "1.8 GB", 1, Recommendation.KEEP),
-    AppCandidate("Pinterest", "com.pinterest", "320 MB", 90, Recommendation.REVIEW)
-)
+import mx.direkta.liacleaner.system.AndroidSystemGateway
 
 @Composable
-fun LiaCleanerApp() {
+fun LiaCleanerApp(systemGateway: AndroidSystemGateway) {
     var tab by remember { mutableIntStateOf(0) }
+    var apps by remember { mutableStateOf<List<AppCandidate>>(emptyList()) }
+    var usageAccess by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun refresh() {
+        scope.launch {
+            loading = true
+            error = null
+            runCatching {
+                usageAccess = systemGateway.hasUsageAccess()
+                apps = systemGateway.installedApps()
+            }.onFailure {
+                error = it.message ?: "No fue posible leer las aplicaciones del teléfono."
+            }
+            loading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        usageAccess = systemGateway.hasUsageAccess()
+        runCatching { apps = systemGateway.installedApps() }
+            .onFailure { error = it.message ?: "No fue posible leer las aplicaciones del teléfono." }
+        loading = false
+    }
 
     Scaffold(
         bottomBar = {
@@ -84,16 +114,40 @@ fun LiaCleanerApp() {
                 .padding(padding)
         ) {
             when (tab) {
-                0 -> HomeScreen(onReviewApps = { tab = 1 })
-                1 -> AppsScreen()
-                else -> CleanScreen()
+                0 -> HomeScreen(
+                    apps = apps,
+                    usageAccess = usageAccess,
+                    onReviewApps = { tab = 1 },
+                    onGrantUsage = systemGateway::openUsageAccessSettings
+                )
+                1 -> AppsScreen(
+                    apps = apps,
+                    usageAccess = usageAccess,
+                    loading = loading,
+                    error = error,
+                    onGrantUsage = systemGateway::openUsageAccessSettings,
+                    onRefresh = ::refresh,
+                    onUninstall = systemGateway::requestUninstall
+                )
+                else -> CleanScreen(apps = apps, onReviewApps = { tab = 1 })
             }
         }
     }
 }
 
 @Composable
-private fun HomeScreen(onReviewApps: () -> Unit) {
+private fun HomeScreen(
+    apps: List<AppCandidate>,
+    usageAccess: Boolean,
+    onReviewApps: () -> Unit,
+    onGrantUsage: () -> Unit
+) {
+    val unusedApps = apps.count { it.recommendation == Recommendation.REMOVE }
+    val recoverableBytes = apps
+        .filter { it.recommendation == Recommendation.REMOVE }
+        .sumOf { it.sizeBytes ?: 0L }
+    val score = (100 - unusedApps * 2).coerceIn(45, 100)
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -105,6 +159,28 @@ private fun HomeScreen(onReviewApps: () -> Unit) {
             Text("Buen día", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("LIA Cleaner", fontSize = 30.sp, fontWeight = FontWeight.Bold)
         }
+
+        if (!usageAccess) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                    )
+                ) {
+                    Column(Modifier.padding(18.dp)) {
+                        Text("Falta acceso de uso", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Actívalo para calcular último uso y tamaño real de las apps.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = onGrantUsage) { Text("Dar acceso") }
+                    }
+                }
+            }
+        }
+
         item {
             Card(
                 shape = RoundedCornerShape(28.dp),
@@ -121,27 +197,21 @@ private fun HomeScreen(onReviewApps: () -> Unit) {
                     Column {
                         Text("Estado del teléfono", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
-                        Text("68/100", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text("Buen estado", color = MaterialTheme.colorScheme.secondary)
+                        Text("$score/100", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(if (score >= 75) "Buen estado" else "Conviene revisar", color = MaterialTheme.colorScheme.secondary)
                     }
-                    HealthRing(score = 68)
+                    HealthRing(score = score)
                 }
             }
         }
         item {
             Text("Espacio recuperable", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("14.7 GB", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+            Text(formatBytes(recoverableBytes), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MetricCard("Apps sin usar", "12", Modifier.weight(1f))
-                MetricCard("Archivos grandes", "24", Modifier.weight(1f))
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MetricCard("Almacenamiento", "64%", Modifier.weight(1f))
-                MetricCard("Recomendaciones", "8", Modifier.weight(1f))
+                MetricCard("Apps detectadas", apps.size.toString(), Modifier.weight(1f))
+                MetricCard("Sin usar 180+ días", unusedApps.toString(), Modifier.weight(1f))
             }
         }
         item {
@@ -152,7 +222,7 @@ private fun HomeScreen(onReviewApps: () -> Unit) {
                     .height(56.dp),
                 shape = RoundedCornerShape(18.dp)
             ) {
-                Text("Revisar ahora")
+                Text("Revisar aplicaciones")
             }
         }
         item { Spacer(Modifier.height(8.dp)) }
@@ -188,7 +258,38 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun AppsScreen() {
+private fun AppsScreen(
+    apps: List<AppCandidate>,
+    usageAccess: Boolean,
+    loading: Boolean,
+    error: String?,
+    onGrantUsage: () -> Unit,
+    onRefresh: () -> Unit,
+    onUninstall: (String) -> Unit
+) {
+    var pendingUninstall by remember { mutableStateOf<AppCandidate?>(null) }
+
+    pendingUninstall?.let { app ->
+        AlertDialog(
+            onDismissRequest = { pendingUninstall = null },
+            title = { Text("Desinstalar ${app.name}?") },
+            text = {
+                Text("LIA Cleaner abrirá el desinstalador de Android. Android te pedirá la confirmación final antes de borrar la app.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingUninstall = null
+                        onUninstall(app.packageName)
+                    }
+                ) { Text("Desinstalar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUninstall = null }) { Text("Cancelar") }
+            }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -197,53 +298,131 @@ private fun AppsScreen() {
     ) {
         item { Spacer(Modifier.height(16.dp)) }
         item {
-            Text("Apps sin usar", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Ordenadas por última vez utilizadas", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Aplicaciones", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Solo se muestran apps instaladas por el usuario.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        items(demoApps) { app -> AppRow(app) }
+
+        if (!usageAccess) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                    )
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Activa Acceso de uso", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Así podremos ordenar por último uso y calcular el espacio ocupado.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = onGrantUsage) { Text("Abrir ajustes") }
+                    }
+                }
+            }
+        }
+
+        item {
+            OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("Actualizar datos")
+            }
+        }
+
+        if (loading) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+
+        error?.let { message ->
+            item {
+                Text(message, color = MaterialTheme.colorScheme.error)
+            }
+        }
+
+        items(apps, key = { it.packageName }) { app ->
+            AppRow(app = app, onUninstall = { pendingUninstall = app })
+        }
+
+        item { Spacer(Modifier.height(12.dp)) }
     }
 }
 
 @Composable
-private fun AppRow(app: AppCandidate) {
+private fun AppRow(app: AppCandidate, onUninstall: () -> Unit) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(16.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary)
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 12.dp)
-            ) {
-                Text(app.name, fontWeight = FontWeight.SemiBold)
-                val lastUse = if (app.daysSinceLastUse <= 1) "usada ayer" else "hace ${app.daysSinceLastUse} días"
-                Text(lastUse, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (app.recommendation == Recommendation.REMOVE) {
-                    Text("Candidata a eliminar", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary)
                 }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp)
+                ) {
+                    Text(app.name, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        app.packageName,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        lastUseLabel(app.daysSinceLastUse),
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    when (app.recommendation) {
+                        Recommendation.REMOVE -> Text("Candidata a eliminar", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                        Recommendation.REVIEW -> Text("Conviene revisar", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Recommendation.KEEP -> Unit
+                    }
+                }
+                Text(formatBytes(app.sizeBytes), fontWeight = FontWeight.SemiBold)
             }
-            Text(app.sizeLabel, fontWeight = FontWeight.SemiBold)
+
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                onClick = onUninstall,
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = null)
+                Spacer(Modifier.size(6.dp))
+                Text("Desinstalar")
+            }
         }
     }
 }
 
 @Composable
-private fun CleanScreen() {
+private fun CleanScreen(apps: List<AppCandidate>, onReviewApps: () -> Unit) {
+    val removeCount = apps.count { it.recommendation == Recommendation.REMOVE }
+    val recoverable = apps
+        .filter { it.recommendation == Recommendation.REMOVE }
+        .sumOf { it.sizeBytes ?: 0L }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -253,17 +432,27 @@ private fun CleanScreen() {
         item { Spacer(Modifier.height(16.dp)) }
         item {
             Text("Limpieza guiada", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Revisa antes de eliminar. LIA Cleaner no borra nada importante sin tu acción.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Revisa antes de eliminar. LIA Cleaner no desinstala ninguna app sin tu confirmación y la de Android.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        item { CleanAction("Eliminar apps sin usar", "Hasta 3.2 GB") }
-        item { CleanAction("Borrar archivos grandes", "Hasta 6.8 GB") }
-        item { CleanAction("Revisar descargas", "Hasta 1.1 GB") }
+        item {
+            CleanAction(
+                title = "$removeCount apps con poco uso",
+                amount = formatBytes(recoverable),
+                onClick = onReviewApps
+            )
+        }
+        item { CleanAction("Archivos grandes", "Próxima fase", onClick = {}) }
+        item { CleanAction("Descargas", "Próxima fase", onClick = {}) }
     }
 }
 
 @Composable
-private fun CleanAction(title: String, amount: String) {
+private fun CleanAction(title: String, amount: String, onClick: () -> Unit) {
     Card(
+        onClick = onClick,
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
@@ -284,4 +473,22 @@ private fun CleanAction(title: String, amount: String) {
             }
         }
     }
+}
+
+private fun lastUseLabel(daysSinceLastUse: Int?): String = when {
+    daysSinceLastUse == null -> "Uso no disponible"
+    daysSinceLastUse == 0 -> "Usada hoy"
+    daysSinceLastUse == 1 -> "Usada ayer"
+    else -> "Hace $daysSinceLastUse días"
+}
+
+private fun formatBytes(bytes: Long?): String {
+    if (bytes == null) return "—"
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format("%.0f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format("%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format("%.2f GB", gb)
 }
