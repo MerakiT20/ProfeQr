@@ -51,14 +51,18 @@ class AndroidSystemGatewayImpl(
     override suspend fun installedApps(): List<AppCandidate> = withContext(Dispatchers.IO) {
         val usageAllowed = hasUsageAccess()
         val now = System.currentTimeMillis()
-        val oneYearAgo = now - 365L * 24L * 60L * 60L * 1000L
+        val dayMs = 24L * 60L * 60L * 1000L
+        val twoYearsAgo = now - 730L * dayMs
+        val ninetyDaysAgo = now - 90L * dayMs
 
-        val usageMap = if (usageAllowed) {
-            val usageManager = context.getSystemService(UsageStatsManager::class.java)
-            usageManager.queryAndAggregateUsageStats(oneYearAgo, now)
+        val usageManager = if (usageAllowed) {
+            context.getSystemService(UsageStatsManager::class.java)
         } else {
-            emptyMap()
+            null
         }
+
+        val lastUseMap = usageManager?.queryAndAggregateUsageStats(twoYearsAgo, now) ?: emptyMap()
+        val recentUsageMap = usageManager?.queryAndAggregateUsageStats(ninetyDaysAgo, now) ?: emptyMap()
 
         val storageManager = if (usageAllowed) {
             context.getSystemService(StorageStatsManager::class.java)
@@ -78,10 +82,11 @@ class AndroidSystemGatewayImpl(
             .filter { it.enabled }
             .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
             .map { appInfo ->
-                val stats = usageMap[appInfo.packageName]
-                val lastTimeUsed = stats?.lastTimeUsed?.takeIf { it > 0L }
+                val longStats = lastUseMap[appInfo.packageName]
+                val recentStats = recentUsageMap[appInfo.packageName]
+                val lastTimeUsed = longStats?.lastTimeUsed?.takeIf { it > 0L }
                 val daysSinceLastUse = lastTimeUsed?.let {
-                    ((now - it).coerceAtLeast(0L) / (24L * 60L * 60L * 1000L)).toInt()
+                    ((now - it).coerceAtLeast(0L) / dayMs).toInt()
                 }
 
                 val sizeBytes = if (storageManager != null) {
@@ -110,7 +115,7 @@ class AndroidSystemGatewayImpl(
                     packageName = appInfo.packageName,
                     sizeBytes = sizeBytes,
                     daysSinceLastUse = daysSinceLastUse,
-                    totalTimeInForegroundMs = stats?.totalTimeInForeground ?: 0L,
+                    totalTimeInForegroundMs = recentStats?.totalTimeInForeground ?: 0L,
                     recommendation = recommendation
                 )
             }
