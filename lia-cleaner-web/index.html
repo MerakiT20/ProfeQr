@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#f7fbff" />
+  <title>LIA Cleaner</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <button class="icon-btn" aria-label="Menú">☰</button>
+      <div>
+        <div class="eyebrow">Buen día</div>
+        <h1><span>LIA</span> Cleaner</h1>
+      </div>
+      <button class="icon-btn" aria-label="Notificaciones">♡</button>
+    </header>
+
+    <section id="view-home" class="view active">
+      <article class="hero-card">
+        <div class="hero-heading">
+          <div>
+            <p class="label">Estado del teléfono</p>
+            <h2>En buen estado</h2>
+          </div>
+          <span class="status-dot">✓</span>
+        </div>
+        <div class="health-row">
+          <div class="score-ring" style="--score:68"><strong>68</strong><small>/100</small></div>
+          <div class="recoverable"><small>Espacio recuperable</small><strong>14.7 GB</strong><span>Principal oportunidad: apps sin usar</span></div>
+        </div>
+      </article>
+
+      <section class="metric-grid">
+        <button class="metric-card" data-target="apps"><span class="metric-icon">▦</span><strong>12</strong><small>Apps sin usar</small><em>1.9 GB</em></button>
+        <button class="metric-card" data-target="clean"><span class="metric-icon">▣</span><strong>24</strong><small>Archivos grandes</small><em>5.6 GB</em></button>
+        <article class="metric-card"><span class="metric-icon">◔</span><strong>64%</strong><small>Almacenamiento</small><em>41 / 64 GB</em></article>
+        <button class="metric-card" data-target="clean"><span class="metric-icon">✦</span><strong>8</strong><small>Recomendaciones</small><em>Acciones disponibles</em></button>
+      </section>
+
+      <button id="scanButton" class="primary-action">✦ Revisar ahora</button>
+
+      <section class="insight-card">
+        <div class="insight-icon">i</div>
+        <div><strong>Diagnóstico inteligente</strong><p>No necesitas “liberar RAM”. El problema principal es el almacenamiento ocupado por contenido y apps poco usadas.</p></div>
+      </section>
+    </section>
+
+    <section id="view-apps" class="view">
+      <div class="section-head"><div><p class="eyebrow">Ordenadas por uso</p><h2>Apps sin usar</h2></div><select id="sortApps" aria-label="Ordenar apps"><option value="days">Más antiguas</option><option value="size">Más pesadas</option></select></div>
+      <div id="appList" class="app-list"></div>
+    </section>
+
+    <section id="view-clean" class="view">
+      <div class="section-head"><div><p class="eyebrow">Paso a paso</p><h2>Limpieza guiada</h2></div><span class="status-dot">✓</span></div>
+      <p class="section-copy">Revisa solo lo que realmente vale la pena eliminar. Nada se borra sin tu confirmación.</p>
+      <div id="recommendations" class="recommendations"></div>
+      <div class="recovery-summary"><span>Espacio potencial</span><strong id="potentialTotal">11.1 GB</strong></div>
+      <button id="cleanButton" class="primary-action green">Liberar espacio</button>
+    </section>
+
+    <section id="view-settings" class="view">
+      <div class="section-head"><div><p class="eyebrow">Preferencias</p><h2>Ajustes</h2></div></div>
+      <label class="setting-row"><div><strong>Proteger apps importantes</strong><small>Bancos, autenticadores y servicios críticos</small></div><input type="checkbox" checked /></label>
+      <label class="setting-row"><div><strong>Recordatorio mensual</strong><small>Revisar apps abandonadas cada 30 días</small></div><input type="checkbox" checked /></label>
+      <article class="insight-card"><div class="insight-icon">!</div><div><strong>Versión web</strong><p>Este prototipo usa datos simulados. Para leer apps instaladas, uso real y gestionar cachés necesita integración Android nativa.</p></div></article>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Navegación principal">
+    <button class="nav-item active" data-view="home"><span>⌂</span><small>Inicio</small></button>
+    <button class="nav-item" data-view="apps"><span>▦</span><small>Apps</small></button>
+    <button class="nav-item" data-view="clean"><span>✦</span><small>Limpiar</small></button>
+    <button class="nav-item" data-view="settings"><span>⚙</span><small>Ajustes</small></button>
+  </nav>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
