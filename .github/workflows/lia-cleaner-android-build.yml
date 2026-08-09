@@ -8,6 +8,12 @@ on:
     paths:
       - 'lia-cleaner-kotlin/**'
       - '.github/workflows/lia-cleaner-android-build.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'lia-cleaner-kotlin/**'
+      - '.github/workflows/lia-cleaner-android-build.yml'
 
 jobs:
   build-lia-cleaner:
