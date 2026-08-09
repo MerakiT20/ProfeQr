@@ -2,6 +2,7 @@ package mx.direkta.liacleaner.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,104 +31,55 @@ import androidx.compose.ui.unit.sp
 import mx.direkta.liacleaner.storage.StorageOverview
 import mx.direkta.liacleaner.storage.StorageOverviewAnalyzer
 
-private data class StorageSlice(
-    val label: String,
-    val bytes: Long,
-    val color: Color
-)
+enum class StorageCategory { APPS, IMAGES, VIDEOS, AUDIO, OTHER, FREE }
+
+private data class StorageSlice(val label: String, val bytes: Long, val color: Color, val category: StorageCategory?)
 
 @Composable
 fun StorageOverviewCard(
     usageAccess: Boolean,
-    onGrantUsage: () -> Unit
+    onGrantUsage: () -> Unit,
+    onCategorySelected: (StorageCategory) -> Unit = {}
 ) {
     val context = LocalContext.current
     val overview by produceState<StorageOverview?>(initialValue = null, usageAccess) {
         value = StorageOverviewAnalyzer(context.applicationContext).load(usageAccess)
     }
 
-    Card(
-        shape = RoundedCornerShape(26.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(1.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(1.dp)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Almacenamiento interno", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-
             val data = overview
             if (data == null) {
-                Text(
-                    "Calculando uso del almacenamiento…",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("Calculando uso del almacenamiento…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 return@Column
             }
-
             val slices = storageSlices(data)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                 StorageDonut(data, slices)
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        "${storageBytes(data.usedBytes)} usados",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        "de ${storageBytes(data.totalBytes)}",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("${storageBytes(data.usedBytes)} usados", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("de ${storageBytes(data.totalBytes)}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.size(6.dp))
-                    Text(
-                        "${storageBytes(data.freeBytes)} libres",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
+                    Text("${storageBytes(data.freeBytes)} libres", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.secondary)
                 }
             }
-
             slices.chunked(2).forEach { pair ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    pair.forEach { slice ->
-                        StorageLegendItem(slice, Modifier.weight(1f))
-                    }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    pair.forEach { slice -> StorageLegendItem(slice, Modifier.weight(1f), onCategorySelected) }
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
-
             if (!data.detailed) {
                 Text(
-                    if (usageAccess) {
-                        "Android no devolvió el desglose detallado. El total usado y libre sí es real."
-                    } else {
-                        "Activa Acceso de uso para separar Apps, Imágenes, Videos y Audio."
-                    },
+                    if (usageAccess) "Android no devolvió el desglose detallado. El total usado y libre sí es real."
+                    else "Activa Acceso de uso para separar Apps, Imágenes, Videos y Audio.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (!usageAccess) {
-                    androidx.compose.material3.TextButton(onClick = onGrantUsage) {
-                        Text("Activar desglose")
-                    }
-                }
+                if (!usageAccess) androidx.compose.material3.TextButton(onClick = onGrantUsage) { Text("Activar desglose") }
             } else {
-                Text(
-                    "Otros incluye documentos, descargas, archivos del sistema y contenido no clasificado en las categorías anteriores.",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("Toca Apps, Imágenes, Videos u Otros para abrir directamente su herramienta de limpieza.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -135,19 +87,17 @@ fun StorageOverviewCard(
 
 @Composable
 private fun storageSlices(data: StorageOverview): List<StorageSlice> {
-    val scheme = MaterialTheme.colorScheme
-    val slices = mutableListOf<StorageSlice>()
+    val s = MaterialTheme.colorScheme
+    val out = mutableListOf<StorageSlice>()
     if (data.detailed) {
-        slices += StorageSlice("Apps", data.appBytes ?: 0L, scheme.primary)
-        slices += StorageSlice("Imágenes", data.imageBytes ?: 0L, scheme.secondary)
-        slices += StorageSlice("Videos", data.videoBytes ?: 0L, scheme.tertiary)
-        slices += StorageSlice("Audio", data.audioBytes ?: 0L, scheme.error)
-        slices += StorageSlice("Otros", data.otherBytes ?: 0L, scheme.onSurfaceVariant)
-    } else {
-        slices += StorageSlice("Usado", data.usedBytes, scheme.primary)
-    }
-    slices += StorageSlice("Libre", data.freeBytes, scheme.surfaceVariant)
-    return slices
+        out += StorageSlice("Apps", data.appBytes ?: 0L, s.primary, StorageCategory.APPS)
+        out += StorageSlice("Imágenes", data.imageBytes ?: 0L, s.secondary, StorageCategory.IMAGES)
+        out += StorageSlice("Videos", data.videoBytes ?: 0L, s.tertiary, StorageCategory.VIDEOS)
+        out += StorageSlice("Audio", data.audioBytes ?: 0L, s.error, StorageCategory.AUDIO)
+        out += StorageSlice("Otros", data.otherBytes ?: 0L, s.onSurfaceVariant, StorageCategory.OTHER)
+    } else out += StorageSlice("Usado", data.usedBytes, s.primary, null)
+    out += StorageSlice("Libre", data.freeBytes, s.surfaceVariant, StorageCategory.FREE)
+    return out
 }
 
 @Composable
@@ -155,37 +105,18 @@ private fun StorageDonut(data: StorageOverview, slices: List<StorageSlice>) {
     val usedSlices = slices.filter { it.label != "Libre" && it.bytes > 0L }
     val usedCategoryTotal = usedSlices.sumOf { it.bytes }.coerceAtLeast(1L)
     val total = data.totalBytes.coerceAtLeast(1L)
-    val usedSweep = 360f * (data.usedBytes.toDouble() / total.toDouble()).coerceIn(0.0, 1.0).toFloat()
-    val freeColor = slices.firstOrNull { it.label == "Libre" }?.color
-        ?: MaterialTheme.colorScheme.surfaceVariant
-
-    Box(modifier = Modifier.size(142.dp), contentAlignment = Alignment.Center) {
+    val usedSweep = 360f * (data.usedBytes.toDouble() / total).coerceIn(0.0, 1.0).toFloat()
+    val freeColor = slices.firstOrNull { it.label == "Libre" }?.color ?: MaterialTheme.colorScheme.surfaceVariant
+    Box(Modifier.size(142.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(142.dp)) {
             val stroke = Stroke(width = 22.dp.toPx())
             var start = -90f
             usedSlices.forEach { slice ->
-                val sweep = usedSweep * (slice.bytes.toDouble() / usedCategoryTotal.toDouble()).toFloat()
-                if (sweep > 0f) {
-                    drawArc(
-                        color = slice.color,
-                        startAngle = start,
-                        sweepAngle = sweep,
-                        useCenter = false,
-                        style = stroke
-                    )
-                    start += sweep
-                }
+                val sweep = usedSweep * (slice.bytes.toDouble() / usedCategoryTotal).toFloat()
+                if (sweep > 0f) { drawArc(slice.color, start, sweep, false, style = stroke); start += sweep }
             }
             val freeSweep = (360f - usedSweep).coerceAtLeast(0f)
-            if (freeSweep > 0f) {
-                drawArc(
-                    color = freeColor,
-                    startAngle = -90f + usedSweep,
-                    sweepAngle = freeSweep,
-                    useCenter = false,
-                    style = stroke
-                )
-            }
+            if (freeSweep > 0f) drawArc(freeColor, -90f + usedSweep, freeSweep, false, style = stroke)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             val percent = ((data.usedBytes * 100.0) / total).coerceIn(0.0, 100.0).toInt()
@@ -196,10 +127,12 @@ private fun StorageDonut(data: StorageOverview, slices: List<StorageSlice>) {
 }
 
 @Composable
-private fun StorageLegendItem(slice: StorageSlice, modifier: Modifier = Modifier) {
+private fun StorageLegendItem(slice: StorageSlice, modifier: Modifier, onSelected: (StorageCategory) -> Unit) {
+    val clickable = slice.category != null && slice.category != StorageCategory.FREE
     Row(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(13.dp))
+            .then(if (clickable) Modifier.clickable { onSelected(slice.category!!) } else Modifier)
             .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp)
