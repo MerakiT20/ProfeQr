@@ -2,6 +2,18 @@ name: LIA Cleaner Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/lia-cleaner-kotlin
+    paths:
+      - 'lia-cleaner-kotlin/**'
+      - '.github/workflows/lia-cleaner-android-build.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'lia-cleaner-kotlin/**'
+      - '.github/workflows/lia-cleaner-android-build.yml'
 
 jobs:
   build-lia-cleaner:
@@ -24,6 +36,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+
+      - name: Bundle ImageEmbedder model
+        run: |
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 3 \
+            --output app/src/main/assets/mobilenet_v3_small.tflite \
+            https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/latest/mobilenet_v3_small.tflite
+          test -s app/src/main/assets/mobilenet_v3_small.tflite
 
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
