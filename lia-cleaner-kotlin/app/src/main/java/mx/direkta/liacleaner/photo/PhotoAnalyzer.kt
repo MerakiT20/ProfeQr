@@ -55,6 +55,8 @@ class PhotoAnalyzer(
         val photos = queryPhotos()
         cache.removeMissing(photos.mapTo(mutableSetOf()) { it.id })
 
+        // Exact duplicates must have the same byte length. SHA-256 is only needed
+        // inside equal-size groups, which avoids reading every full-resolution file.
         val duplicateSizeIds = photos
             .asSequence()
             .filter { it.sizeBytes > 0L }
@@ -119,6 +121,8 @@ class PhotoAnalyzer(
             group.photos.drop(1).map { it.id }
         }.toSet()
 
+        // Keep one representative of each exact group so perceptual grouping cannot
+        // fill a near-duplicate group with several byte-identical copies.
         val nearInput = analyzed.filterNot { it.id in exactExtraIds }
         val nearGroups = buildNearDuplicateGroups(nearInput)
 
@@ -235,12 +239,11 @@ class PhotoAnalyzer(
     }
 
     private fun calculatePHash(source: Bitmap): Long {
-        val size = 32
-        val bitmap = Bitmap.createScaledBitmap(source, size, size, true)
-        val gray = Array(size) { DoubleArray(size) }
+        val bitmap = Bitmap.createScaledBitmap(source, PHASH_SIZE, PHASH_SIZE, true)
+        val gray = Array(PHASH_SIZE) { DoubleArray(PHASH_SIZE) }
         try {
-            for (x in 0 until size) {
-                for (y in 0 until size) {
+            for (x in 0 until PHASH_SIZE) {
+                for (y in 0 until PHASH_SIZE) {
                     gray[x][y] = luminance(bitmap.getPixel(x, y)).toDouble()
                 }
             }
@@ -248,27 +251,39 @@ class PhotoAnalyzer(
             if (bitmap !== source) bitmap.recycle()
         }
 
-        val coeffs = DoubleArray(64)
-        var index = 0
-        for (u in 0 until 8) {
-            for (v in 0 until 8) {
+        // Compute only the low-frequency 8x8 DCT coefficients and do it as a
+        // separable transform. This avoids recalculating cosines thousands of
+        // times per image and substantially reduces CPU/battery use.
+        val horizontal = Array(PHASH_LOW) { DoubleArray(PHASH_SIZE) }
+        for (u in 0 until PHASH_LOW) {
+            for (y in 0 until PHASH_SIZE) {
                 var sum = 0.0
-                for (x in 0 until size) {
-                    val cx = cos(((2 * x + 1) * u * PI) / (2.0 * size))
-                    for (y in 0 until size) {
-                        val cy = cos(((2 * y + 1) * v * PI) / (2.0 * size))
-                        sum += gray[x][y] * cx * cy
-                    }
+                for (x in 0 until PHASH_SIZE) {
+                    sum += gray[x][y] * PHASH_COS[u][x]
+                }
+                horizontal[u][y] = sum
+            }
+        }
+
+        val coeffs = DoubleArray(PHASH_LOW * PHASH_LOW)
+        var index = 0
+        for (u in 0 until PHASH_LOW) {
+            for (v in 0 until PHASH_LOW) {
+                var sum = 0.0
+                for (y in 0 until PHASH_SIZE) {
+                    sum += horizontal[u][y] * PHASH_COS[v][y]
                 }
                 coeffs[index++] = sum
             }
         }
 
-        val medianValues = coeffs.copyOfRange(1, coeffs.size).sorted()
-        val median = medianValues[medianValues.size / 2]
+        // The DC coefficient (index 0) represents global brightness, so exclude it
+        // from the median and hash bits. The remaining 63 bits represent structure.
+        val values = coeffs.copyOfRange(1, coeffs.size).sorted()
+        val median = values[values.size / 2]
         var hash = 0L
-        coeffs.forEachIndexed { i, value ->
-            if (value > median) hash = hash or (1L shl i)
+        for (i in 1 until coeffs.size) {
+            if (coeffs[i] > median) hash = hash or (1L shl (i - 1))
         }
         return hash
     }
@@ -395,5 +410,15 @@ class PhotoAnalyzer(
             .groupBy { find(it) }
             .values
             .map { it.toList() }
+    }
+
+    companion object {
+        private const val PHASH_SIZE = 32
+        private const val PHASH_LOW = 8
+        private val PHASH_COS: Array<DoubleArray> = Array(PHASH_LOW) { u ->
+            DoubleArray(PHASH_SIZE) { x ->
+                cos(((2 * x + 1) * u * PI) / (2.0 * PHASH_SIZE))
+            }
+        }
     }
 }
