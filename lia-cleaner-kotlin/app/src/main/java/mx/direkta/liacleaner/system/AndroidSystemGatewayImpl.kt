@@ -66,8 +66,9 @@ class AndroidSystemGatewayImpl(
             null
         }
 
-        // Some OEMs are unreliable with queryAndAggregateUsageStats() over long ranges.
-        // Query explicit buckets and merge them, then use the aggregate API only as fallback.
+        // Several OEMs, including some Xiaomi/HyperOS builds, can return sparse data
+        // from queryAndAggregateUsageStats() over long ranges. Query explicit buckets
+        // first, then use the aggregate API as fallback.
         val longUsage = if (usageManager != null) {
             val monthly = queryUsage(usageManager, UsageStatsManager.INTERVAL_MONTHLY, twoYearsAgo, now)
             val yearly = queryUsage(usageManager, UsageStatsManager.INTERVAL_YEARLY, twoYearsAgo, now)
@@ -108,6 +109,7 @@ class AndroidSystemGatewayImpl(
             .filter { it.enabled }
             .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
             .map { appInfo ->
+                val label = packageManager.getApplicationLabel(appInfo).toString()
                 val longStats = longUsage[appInfo.packageName]
                 val recentStats = recentUsage[appInfo.packageName]
                 val lastTimeUsed = listOfNotNull(
@@ -137,7 +139,9 @@ class AndroidSystemGatewayImpl(
                     null
                 }
 
-                val isProtected = appInfo.packageName in protectedPackages
+                val isProtected = appInfo.packageName in protectedPackages ||
+                    looksSensitive(appInfo.packageName, label)
+
                 val decision = AppRecommendationEngine.evaluate(
                     usageAccess = usageAllowed,
                     usageDatasetAvailable = usageDatasetAvailable,
@@ -147,7 +151,7 @@ class AndroidSystemGatewayImpl(
                 )
 
                 AppCandidate(
-                    name = packageManager.getApplicationLabel(appInfo).toString(),
+                    name = label,
                     packageName = appInfo.packageName,
                     sizeBytes = sizeBytes,
                     daysSinceLastUse = daysSinceLastUse,
@@ -278,6 +282,20 @@ class AndroidSystemGatewayImpl(
             .mapNotNullTo(output) { it.packageName }
 
         return output
+    }
+
+    private fun looksSensitive(packageName: String, label: String): Boolean {
+        val text = "$packageName $label".lowercase()
+        val protectedTerms = listOf(
+            "authenticator", "autenticador", "otp", "token",
+            "password", "contraseña", "passkey",
+            "bank", "banco", "wallet", "cartera",
+            "launcher", "keyboard", "teclado",
+            "dialer", "telefono", "teléfono",
+            "messages", "mensajes", "sms",
+            "emergency", "emergencia"
+        )
+        return protectedTerms.any(text::contains)
     }
 
     @Suppress("DEPRECATION")
