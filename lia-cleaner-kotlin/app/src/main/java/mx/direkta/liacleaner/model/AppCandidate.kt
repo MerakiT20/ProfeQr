@@ -9,7 +9,8 @@ data class AppCandidate(
     val totalTimeInForegroundMs: Long?,
     val recommendation: Recommendation,
     val reason: RecommendationReason,
-    val isProtected: Boolean = false
+    val isProtected: Boolean = false,
+    val isSystemComponent: Boolean = false
 )
 
 enum class Recommendation {
