@@ -26,25 +26,14 @@ class StorageOverviewAnalyzer(private val context: Context) {
 
     suspend fun load(hasUsageAccess: Boolean): StorageOverview = withContext(Dispatchers.IO) {
         val manager = context.getSystemService(StorageStatsManager::class.java)
-        val total = runCatching {
-            manager.getTotalBytes(StorageManager.UUID_DEFAULT)
-        }.getOrElse { fallbackStatFs().first }
-        val free = runCatching {
-            manager.getFreeBytes(StorageManager.UUID_DEFAULT)
-        }.getOrElse { fallbackStatFs().second }
+        val total = runCatching { manager.getTotalBytes(StorageManager.UUID_DEFAULT) }
+            .getOrElse { fallbackStatFs().first }
+        val free = runCatching { manager.getFreeBytes(StorageManager.UUID_DEFAULT) }
+            .getOrElse { fallbackStatFs().second }
             .coerceIn(0L, total.coerceAtLeast(0L))
 
         if (!hasUsageAccess) {
-            return@withContext StorageOverview(
-                totalBytes = total,
-                freeBytes = free,
-                appBytes = null,
-                imageBytes = null,
-                videoBytes = null,
-                audioBytes = null,
-                otherBytes = null,
-                detailed = false
-            )
+            return@withContext StorageOverview(total, free, null, null, null, null, null, false)
         }
 
         val userStats = runCatching {
@@ -54,17 +43,32 @@ class StorageOverviewAnalyzer(private val context: Context) {
             manager.queryExternalStatsForUser(StorageManager.UUID_DEFAULT, Process.myUserHandle())
         }.getOrNull()
 
-        val apps = userStats?.let {
-            // dataBytes already includes cache, so do not add cacheBytes again.
-            (it.appBytes + it.dataBytes).coerceAtLeast(0L)
-        }
-        val images = external?.imageBytes?.coerceAtLeast(0L)
-        val videos = external?.videoBytes?.coerceAtLeast(0L)
-        val audio = external?.audioBytes?.coerceAtLeast(0L)
-        val detailed = apps != null && external != null
         val used = (total - free).coerceAtLeast(0L)
-        val known = listOfNotNull(apps, images, videos, audio).sum()
-        val other = if (detailed) (used - known).coerceAtLeast(0L) else null
+        val imagesRaw = external?.imageBytes?.coerceAtLeast(0L)
+        val videosRaw = external?.videoBytes?.coerceAtLeast(0L)
+        val audioRaw = external?.audioBytes?.coerceAtLeast(0L)
+
+        // getFreeBytes() is intended for end-user display and may count reclaimable
+        // cache as effectively free. StorageStats.dataBytes includes cache. Remove
+        // cache from the Apps bucket so the visual categories use the same accounting
+        // basis as the displayed used/free values.
+        val appsRaw = userStats?.let {
+            (it.appBytes + (it.dataBytes - it.cacheBytes).coerceAtLeast(0L)).coerceAtLeast(0L)
+        }
+
+        val detailed = appsRaw != null && external != null
+        if (!detailed) {
+            return@withContext StorageOverview(total, free, null, null, null, null, null, false)
+        }
+
+        // OEM accounting can still differ slightly. Allocate categories against the
+        // real used total and clamp sequentially so the donut can never exceed 100%.
+        var remaining = used
+        val images = (imagesRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
+        val videos = (videosRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
+        val audio = (audioRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
+        val apps = (appsRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
+        val other = remaining.coerceAtLeast(0L)
 
         StorageOverview(
             totalBytes = total,
@@ -74,7 +78,7 @@ class StorageOverviewAnalyzer(private val context: Context) {
             videoBytes = videos,
             audioBytes = audio,
             otherBytes = other,
-            detailed = detailed
+            detailed = true
         )
     }
 
