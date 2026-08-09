@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,7 +36,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,15 +57,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mx.direkta.liacleaner.model.PhotoGroup
 import mx.direkta.liacleaner.model.PhotoGroupKind
 import mx.direkta.liacleaner.model.PhotoItem
-import mx.direkta.liacleaner.model.PhotoScanResult
 import mx.direkta.liacleaner.photo.AdvancedPhotoAnalyzer
 import mx.direkta.liacleaner.photo.PhotoAnalyzer
+import mx.direkta.liacleaner.photo.PhotoScanSession
 
 @Composable
 fun PhotoCleanerSectionV2(
@@ -70,30 +77,34 @@ fun PhotoCleanerSectionV2(
     advancedPhotoAnalyzer: AdvancedPhotoAnalyzer
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val session by PhotoScanSession.state.collectAsStateWithLifecycle()
     var photoAccess by remember { mutableStateOf(photoAnalyzer.hasPhotoAccess()) }
-    var quickResult by remember { mutableStateOf<PhotoScanResult?>(null) }
-    var aiGroups by remember { mutableStateOf<List<PhotoGroup>>(emptyList()) }
-    var scanning by remember { mutableStateOf(false) }
-    var advancedScanning by remember { mutableStateOf(false) }
-    var done by remember { mutableIntStateOf(0) }
-    var total by remember { mutableIntStateOf(0) }
-    var message by remember { mutableStateOf<String?>(null) }
+    var visibleGroups by remember { mutableIntStateOf(20) }
+    var bulkConfirm by remember { mutableStateOf<List<PhotoItem>?>(null) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) photoAccess = photoAnalyzer.hasPhotoAccess()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
         photoAccess = photoAnalyzer.hasPhotoAccess()
-        message = if (photoAccess) "Acceso concedido." else "Android no concedió acceso a las fotos."
+        PhotoScanSession.setMessage(if (photoAccess) "Acceso concedido." else "Android no concedió acceso a las fotos.")
     }
 
     val deleteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            quickResult = null
-            aiGroups = emptyList()
-            message = "Eliminación completada. Analiza de nuevo para actualizar."
+            PhotoScanSession.invalidateResults("Eliminación completada. Analiza de nuevo para actualizar los grupos.")
+            visibleGroups = 20
         }
     }
 
@@ -109,57 +120,14 @@ fun PhotoCleanerSectionV2(
         permissionLauncher.launch(permissions)
     }
 
-    fun runQuickScan() {
+    fun startQuick() {
         if (!photoAnalyzer.hasPhotoAccess()) {
             photoAccess = false
             requestPhotoAccess()
             return
         }
-        scope.launch {
-            scanning = true
-            aiGroups = emptyList()
-            message = null
-            done = 0
-            total = 0
-            runCatching {
-                photoAnalyzer.quickScan { progressDone, progressTotal ->
-                    withContext(Dispatchers.Main) {
-                        done = progressDone
-                        total = progressTotal
-                    }
-                }
-            }.onSuccess {
-                quickResult = it
-                message = "Análisis rápido terminado."
-            }.onFailure {
-                message = it.message ?: "No fue posible analizar las fotos."
-            }
-            scanning = false
-        }
-    }
-
-    fun runAdvancedScan() {
-        val quick = quickResult ?: return
-        scope.launch {
-            advancedScanning = true
-            message = null
-            done = 0
-            total = 0
-            runCatching {
-                advancedPhotoAnalyzer.analyze(quick) { progressDone, progressTotal ->
-                    withContext(Dispatchers.Main) {
-                        done = progressDone
-                        total = progressTotal
-                    }
-                }
-            }.onSuccess {
-                aiGroups = it
-                message = "Análisis avanzado terminado."
-            }.onFailure {
-                message = it.message ?: "No fue posible completar el análisis avanzado."
-            }
-            advancedScanning = false
-        }
+        visibleGroups = 20
+        PhotoScanSession.startQuick(photoAnalyzer)
     }
 
     fun deletePhotos(photos: List<PhotoItem>) {
@@ -171,12 +139,27 @@ fun PhotoCleanerSectionV2(
             scope.launch(Dispatchers.IO) {
                 photos.forEach { runCatching { context.contentResolver.delete(it.uri, null, null) } }
                 withContext(Dispatchers.Main) {
-                    quickResult = null
-                    aiGroups = emptyList()
-                    message = "Eliminación completada."
+                    PhotoScanSession.invalidateResults("Eliminación completada. Analiza de nuevo para actualizar.")
+                    visibleGroups = 20
                 }
             }
         }
+    }
+
+    bulkConfirm?.let { photos ->
+        AlertDialog(
+            onDismissRequest = { bulkConfirm = null },
+            title = { Text("¿Conservar una copia por grupo?") },
+            text = {
+                Text(
+                    "LIA conservará una fotografía de cada grupo de duplicados EXACTOS y propondrá eliminar ${photos.size} copias idénticas. Android mostrará la confirmación final. Las fotos casi iguales y las de IA no se borran automáticamente."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { bulkConfirm = null; deletePhotos(photos) }) { Text("Continuar") }
+            },
+            dismissButton = { TextButton(onClick = { bulkConfirm = null }) { Text("Cancelar") } }
+        )
     }
 
     Card(
@@ -187,46 +170,47 @@ fun PhotoCleanerSectionV2(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text("Fotos duplicadas y similares", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text(
-                        "Hash primero; IA avanzada solo si la solicitas.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("Fotos", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Duplicados exactos y fotos similares. Hash primero; IA solo si la solicitas.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
             Spacer(Modifier.size(12.dp))
             if (!photoAccess) {
-                Text(
-                    "Da acceso a las fotos que quieras analizar.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("Da acceso a las fotos que quieras analizar.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.size(8.dp))
                 Button(onClick = ::requestPhotoAccess, modifier = Modifier.fillMaxWidth()) { Text("Dar acceso a fotos") }
             } else {
                 Button(
-                    onClick = ::runQuickScan,
-                    enabled = !scanning && !advancedScanning,
+                    onClick = ::startQuick,
+                    enabled = !session.scanning && !session.advancedScanning,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    if (scanning) {
+                    if (session.scanning) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.size(8.dp))
-                        Text(if (total > 0) "$done / $total" else "Analizando…")
+                        Text(if (session.total > 0) "${session.done} / ${session.total}" else "Preparando análisis…")
                     } else {
-                        Text(if (quickResult == null) "Analizar fotos" else "Analizar de nuevo")
+                        Text(if (session.quickResult == null) "Analizar fotos" else "Analizar de nuevo")
                     }
                 }
             }
 
-            message?.let {
+            if (session.scanning) {
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    "Puedes cambiar de pestaña o girar el teléfono; el análisis continuará.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+
+            session.message?.let {
                 Spacer(Modifier.size(7.dp))
                 Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            quickResult?.let { result ->
+            session.quickResult?.let { result ->
                 Spacer(Modifier.size(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PhotoStat("Fotos", result.photos.size.toString(), Modifier.weight(1f))
@@ -236,17 +220,43 @@ fun PhotoCleanerSectionV2(
                 Spacer(Modifier.size(8.dp))
                 PhotoStat("Espacio potencialmente recuperable", photoBytes(result.recoverableBytes), Modifier.fillMaxWidth())
 
-                if (result.quickGroups.isNotEmpty()) {
-                    Spacer(Modifier.size(10.dp))
-                    Text("Resultados por hash", fontWeight = FontWeight.Bold)
+                val exactCopies = remember(result.analyzedAtMs) {
+                    result.exactGroups.flatMap { group ->
+                        val keep = bestPhoto(group.photos)
+                        group.photos.filter { it.id != keep.id }
+                    }
+                }
+                if (exactCopies.isNotEmpty()) {
+                    Spacer(Modifier.size(9.dp))
+                    Button(
+                        onClick = { bulkConfirm = exactCopies },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Conservar 1 por grupo exacto · eliminar ${exactCopies.size} copias")
+                    }
                     Text(
-                        "Los duplicados exactos vienen preseleccionados; las casi iguales requieren revisión.",
-                        fontSize = 11.sp,
+                        "Esta acción masiva solo incluye duplicados SHA-256 exactos. La selección manual sigue disponible abajo.",
+                        fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                val groups = result.quickGroups
+                if (groups.isNotEmpty()) {
+                    Spacer(Modifier.size(10.dp))
+                    Text("Resultados por hash", fontWeight = FontWeight.Bold)
+                    Text("Se muestran por lotes para evitar saturar memoria después del análisis.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.size(7.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        result.quickGroups.forEach { group -> PhotoGroupCardV2(group, photoAnalyzer, ::deletePhotos) }
+                        groups.take(visibleGroups).forEach { group ->
+                            PhotoGroupCardV2(group, photoAnalyzer, ::deletePhotos)
+                        }
+                    }
+                    if (visibleGroups < groups.size) {
+                        Spacer(Modifier.size(8.dp))
+                        OutlinedButton(onClick = { visibleGroups += 20 }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Mostrar 20 grupos más (${groups.size - visibleGroups} restantes)")
+                        }
                     }
                 } else {
                     Spacer(Modifier.size(10.dp))
@@ -265,30 +275,31 @@ fun PhotoCleanerSectionV2(
                         }
                         Spacer(Modifier.size(5.dp))
                         Text(
-                            "Busca similitudes que los hashes pueden no detectar. Requiere más tiempo, memoria y batería; todo se procesa en el teléfono.",
+                            "Busca similitudes que los hashes pueden no detectar. Requiere más tiempo, memoria y batería. Todo se procesa en el teléfono.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.size(8.dp))
                         OutlinedButton(
-                            onClick = ::runAdvancedScan,
-                            enabled = !scanning && !advancedScanning,
+                            onClick = { PhotoScanSession.startAdvanced(advancedPhotoAnalyzer) },
+                            enabled = !session.scanning && !session.advancedScanning,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (advancedScanning) {
+                            if (session.advancedScanning) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.size(8.dp))
-                                Text(if (total > 0) "$done / $total" else "Analizando con IA…")
-                            } else Text(if (aiGroups.isEmpty()) "Iniciar análisis avanzado" else "Repetir análisis avanzado")
+                                Text(if (session.total > 0) "${session.done} / ${session.total}" else "Analizando con IA…")
+                            } else Text(if (session.aiGroups.isEmpty()) "Iniciar análisis avanzado" else "Repetir análisis avanzado")
                         }
                     }
                 }
 
-                if (aiGroups.isNotEmpty()) {
+                if (session.aiGroups.isNotEmpty()) {
                     Spacer(Modifier.size(10.dp))
                     Text("Similares encontradas por IA", fontWeight = FontWeight.Bold)
+                    Text("Siempre requieren selección manual.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        aiGroups.forEach { group -> PhotoGroupCardV2(group, photoAnalyzer, ::deletePhotos) }
+                        session.aiGroups.take(visibleGroups).forEach { group -> PhotoGroupCardV2(group, photoAnalyzer, ::deletePhotos) }
                     }
                 }
             }
@@ -298,26 +309,16 @@ fun PhotoCleanerSectionV2(
 
 @Composable
 private fun PhotoStat(title: String, value: String, modifier: Modifier) {
-    Box(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
-            .padding(10.dp)
-    ) {
-        Column {
-            Text(value, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(14.dp)).padding(10.dp)) {
+        Column { Text(value, fontSize = 17.sp, fontWeight = FontWeight.Bold); Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
 @Composable
-private fun PhotoGroupCardV2(
-    group: PhotoGroup,
-    analyzer: PhotoAnalyzer,
-    onDelete: (List<PhotoItem>) -> Unit
-) {
+private fun PhotoGroupCardV2(group: PhotoGroup, analyzer: PhotoAnalyzer, onDelete: (List<PhotoItem>) -> Unit) {
+    val keep = remember(group.id) { bestPhoto(group.photos) }
     val initial = remember(group.id) {
-        if (group.kind == PhotoGroupKind.EXACT) group.photos.drop(1).map { it.id }.toSet() else emptySet()
+        if (group.kind == PhotoGroupKind.EXACT) group.photos.filter { it.id != keep.id }.map { it.id }.toSet() else emptySet()
     }
     var selectedIds by remember(group.id) { mutableStateOf(initial) }
     val title = when (group.kind) {
@@ -326,10 +327,7 @@ private fun PhotoGroupCardV2(
         PhotoGroupKind.AI_SIMILAR -> "Similares con IA"
     }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-    ) {
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
@@ -341,25 +339,24 @@ private fun PhotoGroupCardV2(
             Spacer(Modifier.size(7.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 items(group.photos, key = { it.id }) { photo ->
-                    PhotoThumbV2(
-                        photo = photo,
-                        analyzer = analyzer,
-                        selected = photo.id in selectedIds,
-                        onToggle = {
-                            selectedIds = if (photo.id in selectedIds) selectedIds - photo.id else selectedIds + photo.id
-                        }
-                    )
+                    PhotoThumbV2(photo, analyzer, photo.id in selectedIds, photo.id == keep.id) {
+                        selectedIds = if (photo.id in selectedIds) selectedIds - photo.id else selectedIds + photo.id
+                    }
                 }
+            }
+            if (group.kind == PhotoGroupKind.EXACT) {
+                Spacer(Modifier.size(6.dp))
+                OutlinedButton(
+                    onClick = { onDelete(group.photos.filter { it.id != keep.id }) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Conservar 1 y eliminar copias (${group.photos.size - 1})") }
             }
             if (selectedIds.isNotEmpty()) {
                 Spacer(Modifier.size(7.dp))
-                OutlinedButton(
-                    onClick = { onDelete(group.photos.filter { it.id in selectedIds }) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                OutlinedButton(onClick = { onDelete(group.photos.filter { it.id in selectedIds }) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.DeleteOutline, contentDescription = null)
                     Spacer(Modifier.size(6.dp))
-                    Text("Eliminar seleccionadas (${selectedIds.size})")
+                    Text("Selección manual (${selectedIds.size})")
                 }
             }
         }
@@ -367,39 +364,31 @@ private fun PhotoGroupCardV2(
 }
 
 @Composable
-private fun PhotoThumbV2(
-    photo: PhotoItem,
-    analyzer: PhotoAnalyzer,
-    selected: Boolean,
-    onToggle: () -> Unit
-) {
+private fun PhotoThumbV2(photo: PhotoItem, analyzer: PhotoAnalyzer, selected: Boolean, keep: Boolean, onToggle: () -> Unit) {
     val image by produceState<ImageBitmap?>(initialValue = null, key1 = photo.id) {
-        value = withContext(Dispatchers.IO) { analyzer.loadPreview(photo.uri, 180)?.asImageBitmap() }
+        value = withContext(Dispatchers.IO) { analyzer.loadPreview(photo.uri, 160)?.asImageBitmap() }
     }
     Box(
-        modifier = Modifier
-            .size(92.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onToggle)
+        modifier = Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface).clickable(onClick = onToggle)
     ) {
-        if (image != null) {
-            Image(image!!, photo.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        } else {
-            Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.align(Alignment.Center))
-        }
+        if (image != null) Image(image!!, photo.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.align(Alignment.Center))
         if (selected) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)))
-            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
+            Icon(Icons.Default.CheckCircle, contentDescription = "Seleccionada", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
         }
-        Text(
-            photoBytes(photo.sizeBytes),
-            fontSize = 9.sp,
-            color = Color.White,
-            modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.55f)).padding(3.dp)
-        )
+        if (keep) {
+            Text("CONSERVAR", fontSize = 7.sp, color = Color.White, modifier = Modifier.align(Alignment.TopStart).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.92f)).padding(horizontal = 4.dp, vertical = 2.dp))
+        }
+        Text(photoBytes(photo.sizeBytes), fontSize = 8.sp, color = Color.White, modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.55f)).padding(3.dp))
     }
 }
+
+private fun bestPhoto(photos: List<PhotoItem>): PhotoItem = photos.maxWithOrNull(
+    compareBy<PhotoItem> { it.width.toLong() * it.height.toLong() }
+        .thenBy { it.sizeBytes }
+        .thenBy { it.dateTakenMs }
+) ?: photos.first()
 
 private fun photoBytes(bytes: Long): String {
     if (bytes < 1024L) return "$bytes B"
