@@ -52,6 +52,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -72,6 +73,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,6 +85,7 @@ import mx.direkta.liacleaner.model.PhotoGroupKind
 import mx.direkta.liacleaner.model.PhotoItem
 import mx.direkta.liacleaner.model.PhotoScanResult
 import mx.direkta.liacleaner.model.Recommendation
+import mx.direkta.liacleaner.model.RecommendationReason
 import mx.direkta.liacleaner.photo.AdvancedPhotoAnalyzer
 import mx.direkta.liacleaner.photo.PhotoAnalyzer
 import mx.direkta.liacleaner.system.AndroidSystemGateway
@@ -101,6 +106,7 @@ fun LiaCleanerApp(systemGateway: AndroidSystemGateway) {
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val photoAnalyzer = remember { PhotoAnalyzer(context.applicationContext) }
     val advancedPhotoAnalyzer = remember {
         AdvancedPhotoAnalyzer(context.applicationContext, photoAnalyzer)
@@ -121,10 +127,15 @@ fun LiaCleanerApp(systemGateway: AndroidSystemGateway) {
     }
 
     LaunchedEffect(Unit) {
-        usageAccess = systemGateway.hasUsageAccess()
-        runCatching { apps = systemGateway.installedApps() }
-            .onFailure { error = it.message ?: "No fue posible leer las aplicaciones del teléfono." }
-        loading = false
+        refreshApps()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshApps()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
@@ -190,11 +201,14 @@ private fun HomeScreen(
     onReviewApps: () -> Unit,
     onGrantUsage: () -> Unit
 ) {
-    val unusedApps = apps.count { it.recommendation == Recommendation.REMOVE }
-    val recoverableBytes = apps
-        .filter { it.recommendation == Recommendation.REMOVE }
-        .sumOf { it.sizeBytes ?: 0L }
-    val score = (100 - unusedApps * 2).coerceIn(45, 100)
+    val candidates = apps.filter { it.recommendation == Recommendation.REMOVE }
+    val recoverableBytes = candidates.mapNotNull { it.sizeBytes }.sum()
+    val dataUnavailable = apps.count {
+        it.reason == RecommendationReason.USAGE_DATA_UNAVAILABLE ||
+            it.reason == RecommendationReason.USAGE_ACCESS_REQUIRED
+    }
+    val analysisReady = usageAccess && apps.isNotEmpty() && dataUnavailable < apps.size
+    val score = (100 - candidates.size * 2).coerceIn(45, 100)
 
     LazyColumn(
         modifier = Modifier
@@ -219,7 +233,7 @@ private fun HomeScreen(
                     Column(Modifier.padding(18.dp)) {
                         Text("Falta acceso de uso", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Actívalo para calcular último uso y tamaño real de las apps.",
+                            "Actívalo para calcular inactividad y tamaño real de las apps.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
@@ -242,39 +256,43 @@ private fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
-                        Text("Estado del teléfono", fontWeight = FontWeight.SemiBold)
+                    Column(Modifier.weight(1f)) {
+                        Text("Estado del análisis", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "$score/100",
-                            fontSize = 34.sp,
+                            if (analysisReady) "$score/100" else "Pendiente",
+                            fontSize = if (analysisReady) 34.sp else 26.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            if (score >= 75) "Buen estado" else "Conviene revisar",
+                            if (analysisReady) "${candidates.size} apps candidatas" else "Faltan datos de uso",
                             color = MaterialTheme.colorScheme.secondary
                         )
                     }
-                    HealthRing(score = score)
+                    HealthRing(if (analysisReady) score.toString() else "—")
                 }
             }
         }
+
         item {
-            Text("Espacio recuperable en apps", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Espacio liberable en apps", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                formatBytes(recoverableBytes),
+                if (candidates.isNotEmpty() && candidates.none { it.sizeBytes != null }) "—"
+                else formatBytes(recoverableBytes),
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.secondary
             )
         }
+
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MetricCard("Apps detectadas", apps.size.toString(), Modifier.weight(1f))
-                MetricCard("Sin usar 180+ días", unusedApps.toString(), Modifier.weight(1f))
+                MetricCard("Candidatas", candidates.size.toString(), Modifier.weight(1f))
             }
         }
+
         item {
             Button(
                 onClick = onReviewApps,
@@ -291,7 +309,7 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun HealthRing(score: Int) {
+private fun HealthRing(label: String) {
     Box(
         modifier = Modifier
             .size(96.dp)
@@ -299,12 +317,7 @@ private fun HealthRing(score: Int) {
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            score.toString(),
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
+        Text(label, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -339,8 +352,14 @@ private fun AppsScreen(
     var searchQuery by remember { mutableStateOf("") }
 
     val candidateApps = apps.filter { it.recommendation == Recommendation.REMOVE }
-    val recoverableBytes = candidateApps.sumOf { it.sizeBytes ?: 0L }
+    val recoverableKnown = candidateApps.mapNotNull { it.sizeBytes }
+    val recoverableBytes = recoverableKnown.sum()
     val reviewApps = apps.count { it.recommendation == Recommendation.REVIEW }
+    val recentApps = apps.count { it.recommendation == Recommendation.KEEP && !it.isProtected }
+    val noDataApps = apps.count {
+        it.reason == RecommendationReason.USAGE_DATA_UNAVAILABLE ||
+            it.reason == RecommendationReason.USAGE_ACCESS_REQUIRED
+    }
 
     val visibleApps = remember(apps, sortMode, onlyCandidates, searchQuery) {
         val filtered = apps.asSequence()
@@ -353,11 +372,13 @@ private fun AppsScreen(
             .toList()
 
         when (sortMode) {
-            AppSortMode.INACTIVITY -> filtered.sortedByDescending { it.daysSinceLastUse ?: -1 }
+            AppSortMode.INACTIVITY -> filtered.sortedByDescending {
+                it.daysSinceLastUse ?: it.installAgeDays ?: -1
+            }
             AppSortMode.SIZE -> filtered.sortedByDescending { it.sizeBytes ?: -1L }
             AppSortMode.LOW_USAGE -> filtered.sortedWith(
-                compareBy<AppCandidate> { it.totalTimeInForegroundMs }
-                    .thenByDescending { it.daysSinceLastUse ?: -1 }
+                compareBy<AppCandidate> { it.totalTimeInForegroundMs ?: Long.MAX_VALUE }
+                    .thenByDescending { it.daysSinceLastUse ?: it.installAgeDays ?: -1 }
             )
             AppSortMode.NAME -> filtered.sortedBy { it.name.lowercase() }
         }
@@ -368,7 +389,7 @@ private fun AppsScreen(
             onDismissRequest = { pendingUninstall = null },
             title = { Text("Desinstalar ${app.name}?") },
             text = {
-                Text("LIA Cleaner abrirá el desinstalador de Android. Android te pedirá la confirmación final antes de borrar la app.")
+                Text("LIA Cleaner abrirá el desinstalador de Android. Android te pedirá la confirmación final.")
             },
             confirmButton = {
                 TextButton(
@@ -388,7 +409,7 @@ private fun AppsScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item { Spacer(Modifier.height(10.dp)) }
         item {
@@ -414,19 +435,19 @@ private fun AppsScreen(
         if (!usageAccess) {
             item {
                 Card(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
                     )
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("Activa Acceso de uso", fontWeight = FontWeight.SemiBold)
                             Text(
-                                "Necesario para antigüedad, tiempo de uso y tamaño.",
+                                "Necesario para inactividad, tiempo de uso y tamaño.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -437,12 +458,35 @@ private fun AppsScreen(
             }
         }
 
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MiniStatCard("Candidatas", candidateApps.size.toString(), Modifier.weight(1f))
-                MiniStatCard("Liberable", formatBytes(recoverableBytes), Modifier.weight(1f))
-                MiniStatCard("Revisar", reviewApps.toString(), Modifier.weight(1f))
+        if (usageAccess && noDataApps > 0 && noDataApps >= (apps.size - apps.count { it.isProtected }).coerceAtLeast(1)) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
+                    )
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Permiso activo, pero faltan estadísticas", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Android/HyperOS no devolvió un historial utilizable. LIA no inventará candidatas hasta tener evidencia suficiente.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
+        }
+
+        item {
+            AppStatsSummary(
+                candidateCount = candidateApps.size,
+                recoverable = if (candidateApps.isNotEmpty() && recoverableKnown.isEmpty()) "—" else formatBytes(recoverableBytes),
+                reviewCount = reviewApps,
+                recentCount = recentApps,
+                noDataCount = noDataApps,
+                knownSizes = recoverableKnown.size
+            )
         }
 
         item {
@@ -490,12 +534,85 @@ private fun AppsScreen(
                 }
             }
         }
+
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+
+        if (!loading && onlyCandidates && visibleApps.isEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                        Text("No hay candidatas con los datos actuales", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (!usageAccess) "Activa el acceso de uso y vuelve a esta pantalla."
+                            else "Quita este filtro para revisar las apps sin historial o con evidencia insuficiente.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
 
         items(visibleApps, key = { it.packageName }) { app ->
             AppRow(app = app, onUninstall = { pendingUninstall = app })
         }
         item { Spacer(Modifier.height(10.dp)) }
+    }
+}
+
+@Composable
+private fun AppStatsSummary(
+    candidateCount: Int,
+    recoverable: String,
+    reviewCount: Int,
+    recentCount: Int,
+    noDataCount: Int,
+    knownSizes: Int
+) {
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(1.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Espacio que podrías liberar", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                recoverable,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary
+            )
+            Text(
+                "$candidateCount candidatas · tamaño conocido en $knownSizes",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompactStat("Revisar", reviewCount.toString(), Modifier.weight(1f))
+                CompactStat("Uso reciente", recentCount.toString(), Modifier.weight(1f))
+                CompactStat("Sin datos", noDataCount.toString(), Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactStat(title: String, value: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 10.dp, vertical = 9.dp)
+    ) {
+        Column {
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
     }
 }
 
@@ -538,16 +655,16 @@ private fun AppRow(app: AppCandidate, onUninstall: () -> Unit) {
             ) {
                 Text(app.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(
-                    "${lastUseLabel(app.daysSinceLastUse)} • Uso 90 d: ${formatUsage(app.totalTimeInForegroundMs)}",
+                    usageDescription(app),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
                 )
-                when (app.recommendation) {
-                    Recommendation.REMOVE -> Text("Candidata a eliminar", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-                    Recommendation.REVIEW -> Text("Conviene revisar", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    Recommendation.KEEP -> Text("Uso reciente", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text(
+                    recommendationDescription(app),
+                    fontSize = 11.sp,
+                    color = recommendationColor(app)
+                )
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(formatBytes(app.sizeBytes), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -561,6 +678,35 @@ private fun AppRow(app: AppCandidate, onUninstall: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun recommendationColor(app: AppCandidate): Color = when (app.recommendation) {
+    Recommendation.REMOVE -> MaterialTheme.colorScheme.secondary
+    Recommendation.REVIEW -> MaterialTheme.colorScheme.primary
+    Recommendation.KEEP -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+private fun usageDescription(app: AppCandidate): String {
+    val last = when {
+        app.daysSinceLastUse == 0 -> "Usada hoy"
+        app.daysSinceLastUse == 1 -> "Usada ayer"
+        app.daysSinceLastUse != null -> "Hace ${app.daysSinceLastUse} días"
+        app.installAgeDays != null -> "Sin uso registrado · instalada hace ${app.installAgeDays} d"
+        else -> "Sin historial de uso"
+    }
+    return "$last · Uso 90 d: ${formatUsage(app.totalTimeInForegroundMs)}"
+}
+
+private fun recommendationDescription(app: AppCandidate): String = when (app.reason) {
+    RecommendationReason.UNUSED_180_PLUS_DAYS -> "Candidata: 180+ días sin usar"
+    RecommendationReason.NO_USAGE_RECORDED_OLD_APP -> "Candidata: antigua y sin uso registrado"
+    RecommendationReason.UNUSED_90_TO_179_DAYS -> "Conviene revisar: 90+ días sin usar"
+    RecommendationReason.NO_USAGE_RECORDED_RECENT_APP -> "Conviene revisar: sin uso registrado"
+    RecommendationReason.USAGE_DATA_UNAVAILABLE -> "Android no devolvió historial suficiente"
+    RecommendationReason.USAGE_ACCESS_REQUIRED -> "Falta permiso de estadísticas de uso"
+    RecommendationReason.PROTECTED_APP -> "Protegida de recomendaciones automáticas"
+    RecommendationReason.USED_RECENTLY -> "Uso reciente"
 }
 
 @Composable
@@ -602,10 +748,8 @@ private fun CleanScreen(
     photoAnalyzer: PhotoAnalyzer,
     advancedPhotoAnalyzer: AdvancedPhotoAnalyzer
 ) {
-    val removeCount = apps.count { it.recommendation == Recommendation.REMOVE }
-    val appRecoverable = apps
-        .filter { it.recommendation == Recommendation.REMOVE }
-        .sumOf { it.sizeBytes ?: 0L }
+    val candidates = apps.filter { it.recommendation == Recommendation.REMOVE }
+    val appRecoverable = candidates.mapNotNull { it.sizeBytes }.sum()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
@@ -621,8 +765,8 @@ private fun CleanScreen(
         }
         item {
             CleanAction(
-                title = "$removeCount apps con poco uso",
-                amount = formatBytes(appRecoverable),
+                title = "${candidates.size} apps candidatas",
+                amount = if (candidates.isNotEmpty() && candidates.none { it.sizeBytes != null }) "—" else formatBytes(appRecoverable),
                 onClick = onReviewApps
             )
         }
@@ -1075,14 +1219,8 @@ private fun CleanAction(title: String, amount: String, onClick: () -> Unit) {
     }
 }
 
-private fun lastUseLabel(daysSinceLastUse: Int?): String = when {
-    daysSinceLastUse == null -> "Sin historial"
-    daysSinceLastUse == 0 -> "Hoy"
-    daysSinceLastUse == 1 -> "Ayer"
-    else -> "Hace $daysSinceLastUse días"
-}
-
-private fun formatUsage(milliseconds: Long): String {
+private fun formatUsage(milliseconds: Long?): String {
+    if (milliseconds == null) return "sin datos"
     if (milliseconds <= 0L) return "0 min"
     val totalMinutes = milliseconds / 60_000L
     if (totalMinutes < 1L) return "<1 min"
