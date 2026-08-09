@@ -109,8 +109,9 @@ fun LiaCleanerAppNext(systemGateway: AndroidSystemGateway, onOpenSettings: () ->
     fun openClean(focus: CleanFocus) { cleanFocus = focus; tab = 2 }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Default.Home, null) }, label = { Text("Inicio") })
                 NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Default.Apps, null) }, label = { Text("Apps") })
                 NavigationBarItem(tab == 2, { tab = 2; cleanFocus = CleanFocus.OVERVIEW }, { Icon(Icons.Default.CleaningServices, null) }, label = { Text("Limpiar") })
@@ -183,13 +184,13 @@ private fun NextHomeScreen(
         }
         item { StorageOverviewCard(usageAccess, onGrantUsage, onStorage) }
         item {
-            Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = .08f))) {
                 Column(Modifier.fillMaxWidth().padding(18.dp)) {
-                    Text("Limpieza recomendada", fontWeight = FontWeight.Bold)
-                    Text("${candidates.size} apps candidatas", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text(nextBytes(recoverable) + " potencialmente liberables", color = MaterialTheme.colorScheme.secondary)
+                    Text("Espacio recuperable", fontWeight = FontWeight.Bold)
+                    Text(nextBytes(recoverable), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                    Text("${candidates.size} apps candidatas para revisar", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = onReviewApps, modifier = Modifier.fillMaxWidth()) { Text("Revisar aplicaciones") }
+                    Button(onClick = onReviewApps, modifier = Modifier.fillMaxWidth()) { Text("Ver recomendaciones") }
                 }
             }
         }
@@ -245,7 +246,7 @@ private fun NextAppsScreen(
         }
         if (loading) item { Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         items(shown, key = { it.packageName }) { app ->
-            Card(shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     NextAppIcon(app.packageName)
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
@@ -288,9 +289,9 @@ private fun NextCleanScreen(
         } else if (focus == CleanFocus.PHOTOS) {
             item { PhotoCleanerSectionV2(photoAnalyzer, advancedPhotoAnalyzer) }
         } else if (focus == CleanFocus.VIDEOS) {
-            item { VideoCleanerSection() }
+            item { VideoCleanerSectionV2() }
         } else {
-            item { FileCleanerSection() }
+            item { FileCleanerSectionV2() }
         }
         item { Spacer(Modifier.height(10.dp)) }
     }
@@ -298,9 +299,11 @@ private fun NextCleanScreen(
 
 @Composable
 private fun CleanJump(title: String, subtitle: String, onClick: () -> Unit) {
-    Card(onClick = onClick, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+    Card(onClick = onClick, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
+            Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.primary.copy(alpha=.09f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
+            }
             Column(Modifier.padding(start = 12.dp)) { Text(title, fontWeight = FontWeight.SemiBold); Text(subtitle, color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp) }
         }
     }
