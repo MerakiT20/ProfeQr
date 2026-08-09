@@ -1,5 +1,10 @@
 package mx.direkta.liacleaner.file
 
+import android.content.Context
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -9,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** Process-level shared scan/deletion session for Files and Videos. */
+/** Shared scan/deletion state for Files and Videos, backed by WorkManager. */
 data class FileScanUiState(
     val scanning: Boolean = false,
     val deleting: Boolean = false,
@@ -34,66 +39,131 @@ object FileScanSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(FileScanUiState())
     val state: StateFlow<FileScanUiState> = _state.asStateFlow()
-    private var job: Job? = null
+    private var observerJob: Job? = null
     private var deleteJob: Job? = null
+    private var attached = false
 
-    fun start(analyzer: FileCleanerAnalyzer, force: Boolean = false) {
-        if (job?.isActive == true || deleteJob?.isActive == true) return
-        if (!force && _state.value.result != null) return
-        job = scope.launch {
-            _state.value = _state.value.copy(
-                scanning = true, phase = FileCleanerAnalyzer.ScanPhase.DISCOVERING,
-                done = 0, total = 0, message = "Analizando almacenamiento…",
-                startedAtMs = System.currentTimeMillis()
-            )
-            runCatching {
-                analyzer.scanDetailed { phase, done, total ->
-                    _state.value = _state.value.copy(phase = phase, done = done, total = total)
+    fun attach(context: Context) {
+        if (attached && observerJob?.isActive == true) return
+        val app = context.applicationContext
+        attached = true
+
+        if (_state.value.result == null) {
+            FileScanCache.load(app)?.let { cached ->
+                _state.value = _state.value.copy(
+                    result = cached,
+                    message = "Último análisis restaurado: ${cached.files.size} archivos."
+                )
+            }
+        }
+
+        val manager = WorkManager.getInstance(app)
+        observerJob?.cancel()
+        observerJob = scope.launch {
+            manager.getWorkInfosForUniqueWorkFlow(FileScanWorker.UNIQUE_NAME).collect { infos ->
+                val info = infos.lastOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+                    ?: infos.lastOrNull()
+                    ?: return@collect
+                when (info.state) {
+                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                        _state.value = _state.value.copy(scanning = true, message = "Análisis en cola…")
+                    }
+                    WorkInfo.State.RUNNING -> {
+                        val progress = info.progress
+                        val phase = runCatching {
+                            FileCleanerAnalyzer.ScanPhase.valueOf(progress.getString(FileScanWorker.KEY_PHASE).orEmpty())
+                        }.getOrNull()
+                        _state.value = _state.value.copy(
+                            scanning = true,
+                            phase = phase,
+                            done = progress.getInt(FileScanWorker.KEY_DONE, 0),
+                            total = progress.getInt(FileScanWorker.KEY_TOTAL, 0),
+                            message = "Analizando almacenamiento…"
+                        )
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        val cached = FileScanCache.load(app)
+                        _state.value = _state.value.copy(
+                            scanning = false,
+                            phase = null,
+                            done = cached?.files?.size ?: 0,
+                            total = cached?.files?.size ?: 0,
+                            result = cached,
+                            message = cached?.let { "Análisis terminado: ${it.files.size} archivos revisados." }
+                                ?: "El análisis terminó, pero no fue posible restaurar sus resultados."
+                        )
+                    }
+                    WorkInfo.State.FAILED -> {
+                        _state.value = _state.value.copy(
+                            scanning = false,
+                            phase = null,
+                            message = info.outputData.getString(FileScanWorker.KEY_ERROR) ?: "El análisis no pudo completarse."
+                        )
+                    }
+                    WorkInfo.State.CANCELLED -> {
+                        _state.value = _state.value.copy(scanning = false, phase = null, message = "Análisis cancelado.")
+                    }
                 }
-            }.onSuccess { result ->
-                _state.value = _state.value.copy(
-                    scanning = false, phase = null,
-                    done = result.files.size, total = result.files.size,
-                    result = result,
-                    message = "Análisis terminado: ${result.files.size} archivos revisados."
-                )
-            }.onFailure { error ->
-                _state.value = _state.value.copy(
-                    scanning = false, phase = null,
-                    message = error.message ?: "No fue posible analizar el almacenamiento."
-                )
             }
         }
     }
 
-    fun refresh(analyzer: FileCleanerAnalyzer) = start(analyzer, force = true)
+    fun start(context: Context, force: Boolean = false) {
+        val app = context.applicationContext
+        attach(app)
+        if (deleteJob?.isActive == true) return
+        if (!force && _state.value.result != null && !_state.value.scanning) return
 
-    fun delete(analyzer: FileCleanerAnalyzer, items: List<CleanerFileItem>, noun: String = "archivo") {
-        if (items.isEmpty() || deleteJob?.isActive == true || job?.isActive == true) return
+        val request = OneTimeWorkRequestBuilder<FileScanWorker>()
+            .addTag(FileScanWorker.TAG)
+            .build()
+        WorkManager.getInstance(app).enqueueUniqueWork(
+            FileScanWorker.UNIQUE_NAME,
+            if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
+            request
+        )
+        _state.value = _state.value.copy(
+            scanning = true,
+            phase = FileCleanerAnalyzer.ScanPhase.DISCOVERING,
+            done = 0,
+            total = 0,
+            message = "Preparando análisis persistente…",
+            startedAtMs = System.currentTimeMillis()
+        )
+    }
+
+    fun refresh(context: Context) {
+        FileScanCache.clear(context.applicationContext)
+        _state.value = _state.value.copy(result = null)
+        start(context, force = true)
+    }
+
+    fun delete(context: Context, analyzer: FileCleanerAnalyzer, items: List<CleanerFileItem>, noun: String = "archivo") {
+        if (items.isEmpty() || deleteJob?.isActive == true || _state.value.scanning) return
+        val app = context.applicationContext
         deleteJob = scope.launch {
             _state.value = _state.value.copy(deleting = true, message = "Eliminando ${items.size} ${noun}(s)…")
-            val deletion = runCatching { analyzer.deleteFiles(items) }
-            deletion.onSuccess { result ->
-                val msg = if (result.failedNames.isEmpty()) {
-                    "${result.deletedCount} ${noun}(s) eliminados · ${formatBytes(result.deletedBytes)} liberados."
-                } else {
-                    "${result.deletedCount} eliminados; ${result.failedNames.size} no pudieron borrarse."
+            runCatching { analyzer.deleteFiles(items) }
+                .onSuccess { result ->
+                    val msg = if (result.failedNames.isEmpty()) {
+                        "${result.deletedCount} ${noun}(s) eliminados · ${formatBytes(result.deletedBytes)} liberados."
+                    } else {
+                        "${result.deletedCount} eliminados; ${result.failedNames.size} no pudieron borrarse."
+                    }
+                    FileScanCache.clear(app)
+                    _state.value = _state.value.copy(deleting = false, result = null, message = msg)
+                    start(app, force = true)
                 }
-                _state.value = _state.value.copy(deleting = false, result = null, message = msg)
-                start(analyzer, force = true)
-            }.onFailure { error ->
-                _state.value = _state.value.copy(deleting = false, message = error.message ?: "No fue posible completar el borrado.")
-            }
+                .onFailure { error ->
+                    _state.value = _state.value.copy(deleting = false, message = error.message ?: "No fue posible completar el borrado.")
+                }
         }
     }
 
     fun setMessage(message: String) { _state.value = _state.value.copy(message = message) }
-    fun replaceResult(result: FileScanResult?, message: String? = null) {
-        if (job?.isActive == true || deleteJob?.isActive == true) return
-        _state.value = _state.value.copy(result = result, message = message)
-    }
-    fun clear(message: String? = null) {
-        if (job?.isActive == true || deleteJob?.isActive == true) return
+    fun clear(context: Context, message: String? = null) {
+        if (_state.value.scanning || deleteJob?.isActive == true) return
+        FileScanCache.clear(context.applicationContext)
         _state.value = FileScanUiState(message = message)
     }
 
