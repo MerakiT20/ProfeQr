@@ -34,7 +34,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,9 +45,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mx.direkta.liacleaner.file.CleanerFileItem
 import mx.direkta.liacleaner.file.CleanerFileKind
 import mx.direkta.liacleaner.file.DuplicateFileGroup
@@ -64,7 +60,6 @@ fun VideoCleanerSectionV2() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val analyzer = remember { FileCleanerAnalyzer(context.applicationContext) }
     val session by FileScanSession.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     var hasAccess by remember { mutableStateOf(analyzer.hasBroadFileAccess()) }
     var minSize by remember { mutableStateOf(50L * MB) }
     var minAge by remember { mutableIntStateOf(0) }
@@ -83,10 +78,8 @@ fun VideoCleanerSectionV2() {
         if(force) FileScanSession.refresh(analyzer) else FileScanSession.start(analyzer)
     }
 
-    fun delete(items:List<CleanerFileItem>){ scope.launch { val r=withContext(Dispatchers.IO){ analyzer.deleteFiles(items) }; FileScanSession.setMessage("${r.deletedCount} video(s) eliminados · ${vBytes(r.deletedBytes)} liberados."); FileScanSession.refresh(analyzer) } }
-
-    pendingFile?.let{ item -> AlertDialog(onDismissRequest={pendingFile=null},title={Text("¿Eliminar ${item.name}?")},text={Text("Se liberarán ${vBytes(item.sizeBytes)}.")},confirmButton={TextButton(onClick={pendingFile=null;delete(listOf(item))}){Text("Eliminar")}},dismissButton={TextButton(onClick={pendingFile=null}){Text("Cancelar")}}) }
-    pendingGroup?.let{ group -> val copies=group.files.filter{it.file.absolutePath!=group.keep.file.absolutePath}; AlertDialog(onDismissRequest={pendingGroup=null},title={Text("Conservar 1 y eliminar ${copies.size} copias")},text={Text("Solo se eliminarán videos con SHA-256 idéntico. Se conservará ${group.keep.name}.")},confirmButton={TextButton(onClick={pendingGroup=null;delete(copies)}){Text("Eliminar copias")}},dismissButton={TextButton(onClick={pendingGroup=null}){Text("Cancelar")}}) }
+    pendingFile?.let{ item -> AlertDialog(onDismissRequest={pendingFile=null},title={Text("¿Eliminar ${item.name}?")},text={Text("Se liberarán ${vBytes(item.sizeBytes)}.")},confirmButton={TextButton(onClick={pendingFile=null;FileScanSession.delete(analyzer,listOf(item),"video")}){Text("Eliminar")}},dismissButton={TextButton(onClick={pendingFile=null}){Text("Cancelar")}}) }
+    pendingGroup?.let{ group -> val copies=group.files.filter{it.file.absolutePath!=group.keep.file.absolutePath}; AlertDialog(onDismissRequest={pendingGroup=null},title={Text("Conservar 1 y eliminar ${copies.size} copias")},text={Text("Solo se eliminarán videos con SHA-256 idéntico. Se conservará ${group.keep.name}.")},confirmButton={TextButton(onClick={pendingGroup=null;FileScanSession.delete(analyzer,copies,"video")}){Text("Eliminar copias")}},dismissButton={TextButton(onClick={pendingGroup=null}){Text("Cancelar")}}) }
 
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
         if(!hasAccess && Build.VERSION.SDK_INT>=Build.VERSION_CODES.R){
@@ -98,10 +91,16 @@ fun VideoCleanerSectionV2() {
             Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                 Row(verticalAlignment=Alignment.CenterVertically){
                     Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.tertiary.copy(alpha=.12f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Movie,null,tint=MaterialTheme.colorScheme.tertiary)}
-                    Column(Modifier.weight(1f).padding(start=12.dp)){Text(if(session.scanning)"Analizando videos…" else "Videos",fontWeight=FontWeight.Bold,fontSize=17.sp);Text(if(session.scanning)"Puedes cambiar de pestaña; el análisis continúa." else "Grandes, antiguos y duplicados exactos.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-                    if(!session.scanning)IconButton(onClick={scan(session.result!=null)}){Icon(Icons.Default.Refresh,"Actualizar")}
+                    Column(Modifier.weight(1f).padding(start=12.dp)){
+                        Text(if(session.scanning) session.phaseLabel else "Videos",fontWeight=FontWeight.Bold,fontSize=17.sp)
+                        Text(if(session.scanning)"Analizando almacenamiento; puedes cambiar de pestaña." else "Grandes, antiguos y duplicados exactos.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if(!session.scanning && !session.deleting)IconButton(onClick={scan(session.result!=null)}){Icon(Icons.Default.Refresh,"Actualizar")}
                 }
-                if(session.scanning){LinearProgressIndicator(progress={session.progress},modifier=Modifier.fillMaxWidth());Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(if(session.total>0)"${session.done} / ${session.total}" else "Preparando…",fontSize=11.sp);Text("${(session.progress*100).toInt()}%",fontSize=11.sp,fontWeight=FontWeight.SemiBold)}} else Button(onClick={scan(session.result!=null)},modifier=Modifier.fillMaxWidth()){Text("Analizar videos")}
+                if(session.scanning){
+                    LinearProgressIndicator(progress={session.progress},modifier=Modifier.fillMaxWidth())
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(if(session.total>0)"${session.done} / ${session.total}" else "Preparando…",fontSize=11.sp);Text("${(session.progress*100).toInt()}%",fontSize=11.sp,fontWeight=FontWeight.SemiBold)}
+                } else Button(onClick={scan(session.result!=null)},enabled=!session.deleting,modifier=Modifier.fillMaxWidth()){Text(if(session.deleting)"Eliminando…" else "Analizar almacenamiento")}
             }
         }
 
