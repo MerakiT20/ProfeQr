@@ -104,10 +104,17 @@ class AndroidSystemGatewayImpl(
             packageManager.getInstalledApplications(0)
         }
 
-        installed.asSequence()
+        val userApps = installed
             .filter { it.packageName != context.packageName }
             .filter { it.enabled }
             .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
+
+        // queryStatsForUid() is normally faster than queryStatsForPackage(). Use it
+        // for the common one-package-per-UID case, while keeping package-level stats
+        // for shared UIDs so the same storage is not attributed to several apps.
+        val uidCounts = userApps.groupingBy { it.uid }.eachCount()
+
+        userApps.asSequence()
             .map { appInfo ->
                 val label = packageManager.getApplicationLabel(appInfo).toString()
                 val longStats = longUsage[appInfo.packageName]
@@ -128,11 +135,18 @@ class AndroidSystemGatewayImpl(
 
                 val sizeBytes = if (storageManager != null) {
                     runCatching {
-                        val storageStats = storageManager.queryStatsForPackage(
-                            appInfo.storageUuid,
-                            appInfo.packageName,
-                            Process.myUserHandle()
-                        )
+                        val storageStats = if (uidCounts[appInfo.uid] == 1) {
+                            storageManager.queryStatsForUid(
+                                appInfo.storageUuid,
+                                appInfo.uid
+                            )
+                        } else {
+                            storageManager.queryStatsForPackage(
+                                appInfo.storageUuid,
+                                appInfo.packageName,
+                                Process.myUserHandle()
+                            )
+                        }
                         storageStats.appBytes + storageStats.dataBytes + storageStats.cacheBytes
                     }.getOrNull() ?: installedApkBytes(appInfo)
                 } else {
