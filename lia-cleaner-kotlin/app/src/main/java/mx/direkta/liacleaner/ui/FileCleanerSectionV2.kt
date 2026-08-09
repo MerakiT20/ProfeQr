@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,7 +35,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,9 +46,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mx.direkta.liacleaner.file.CleanerFileItem
 import mx.direkta.liacleaner.file.CleanerFileKind
 import mx.direkta.liacleaner.file.DuplicateFileGroup
@@ -67,7 +62,6 @@ fun FileCleanerSectionV2() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val analyzer = remember { FileCleanerAnalyzer(context.applicationContext) }
     val session by FileScanSession.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     var hasAccess by remember { mutableStateOf(analyzer.hasBroadFileAccess()) }
     var mode by remember { mutableStateOf(FileMode.LARGE) }
     var minSize by remember { mutableStateOf(100L * MB) }
@@ -79,28 +73,14 @@ fun FileCleanerSectionV2() {
     var pendingGroup by remember { mutableStateOf<DuplicateFileGroup?>(null) }
 
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) hasAccess = analyzer.hasBroadFileAccess()
-        }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) hasAccess = analyzer.hasBroadFileAccess() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun scan(force: Boolean = false) {
-        if (!analyzer.hasBroadFileAccess()) {
-            hasAccess = false
-            analyzer.openBroadFileAccessSettings()
-            return
-        }
+        if (!analyzer.hasBroadFileAccess()) { hasAccess = false; analyzer.openBroadFileAccessSettings(); return }
         if (force) FileScanSession.refresh(analyzer) else FileScanSession.start(analyzer)
-    }
-
-    fun delete(items: List<CleanerFileItem>) {
-        scope.launch {
-            val result = withContext(Dispatchers.IO) { analyzer.deleteFiles(items) }
-            FileScanSession.setMessage("${result.deletedCount} archivo(s) eliminados · ${fmtBytes(result.deletedBytes)} liberados.")
-            FileScanSession.refresh(analyzer)
-        }
     }
 
     pendingFile?.let { item ->
@@ -108,7 +88,7 @@ fun FileCleanerSectionV2() {
             onDismissRequest = { pendingFile = null },
             title = { Text("¿Eliminar ${item.name}?") },
             text = { Text("Se liberarán ${fmtBytes(item.sizeBytes)}. Esta acción requiere tu confirmación.") },
-            confirmButton = { TextButton(onClick = { pendingFile = null; delete(listOf(item)) }) { Text("Eliminar") } },
+            confirmButton = { TextButton(onClick = { pendingFile = null; FileScanSession.delete(analyzer, listOf(item)) }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { pendingFile = null }) { Text("Cancelar") } }
         )
     }
@@ -119,7 +99,7 @@ fun FileCleanerSectionV2() {
             onDismissRequest = { pendingGroup = null },
             title = { Text("Conservar 1 y eliminar ${copies.size} copias") },
             text = { Text("Los archivos tienen SHA-256 idéntico. Se conservará ${group.keep.name} y se liberarían ${fmtBytes(copies.sumOf { it.sizeBytes })}.") },
-            confirmButton = { TextButton(onClick = { pendingGroup = null; delete(copies) }) { Text("Eliminar copias") } },
+            confirmButton = { TextButton(onClick = { pendingGroup = null; FileScanSession.delete(analyzer, copies) }) { Text("Eliminar copias") } },
             dismissButton = { TextButton(onClick = { pendingGroup = null }) { Text("Cancelar") } }
         )
     }
@@ -133,12 +113,10 @@ fun FileCleanerSectionV2() {
         }
 
         ScanProgressCard(
-            title = if (session.scanning) "Analizando archivos…" else "Archivos y descargas",
+            title = if (session.scanning) session.phaseLabel else "Archivos y descargas",
             subtitle = if (session.scanning) "Puedes cambiar de pestaña; el análisis continúa." else "Tamaño, antigüedad, tipo y duplicados exactos.",
-            progress = session.progress,
-            done = session.done,
-            total = session.total,
-            scanning = session.scanning,
+            progress = session.progress, done = session.done, total = session.total,
+            scanning = session.scanning, deleting = session.deleting,
             onScan = { scan(session.result != null) }
         )
 
@@ -151,25 +129,19 @@ fun FileCleanerSectionV2() {
                 MiniStat("Duplicados", groups.size.toString(), Modifier.weight(1f))
                 MiniStat("Liberable", fmtBytes(result.duplicateRecoverableBytes), Modifier.weight(1f))
             }
-
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 FileMode.entries.forEach { item { FilterChip(mode == it, { mode = it; limit = 30 }, label = { Text(it.label) }) } }
             }
-
             if (mode == FileMode.DUPLICATES) {
                 groups.take(limit).forEach { group -> DuplicateFileCard(group) { pendingGroup = group } }
                 if (limit < groups.size) OutlinedButton({ limit += 30 }, Modifier.fillMaxWidth()) { Text("Mostrar 30 más") }
             } else {
                 Text("Filtros", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    listOf(0L to "Todos", 10L*MB to ">10 MB", 100L*MB to ">100 MB", 500L*MB to ">500 MB", 1024L*MB to ">1 GB").forEach { (v,l) ->
-                        item { FilterChip(minSize == v, { minSize = v; limit = 30 }, label = { Text(l) }) }
-                    }
+                    listOf(0L to "Todos", 10L*MB to ">10 MB", 100L*MB to ">100 MB", 500L*MB to ">500 MB", 1024L*MB to ">1 GB").forEach { (v,l) -> item { FilterChip(minSize == v, { minSize = v; limit = 30 }, label = { Text(l) }) } }
                 }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    listOf(0 to "Cualquier fecha", 30 to ">30 d", 90 to ">90 d", 180 to ">180 d", 365 to ">1 año").forEach { (v,l) ->
-                        item { FilterChip(minAge == v, { minAge = v; limit = 30 }, label = { Text(l) }) }
-                    }
+                    listOf(0 to "Cualquier fecha", 30 to ">30 d", 90 to ">90 d", 180 to ">180 d", 365 to ">1 año").forEach { (v,l) -> item { FilterChip(minAge == v, { minAge = v; limit = 30 }, label = { Text(l) }) } }
                 }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     item { FilterChip(kind == null, { kind = null }, label = { Text("Todos") }) }
@@ -178,7 +150,6 @@ fun FileCleanerSectionV2() {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     FileSortMode.entries.forEach { s -> item { FilterChip(sort == s, { sort = s }, label = { Text(sortLabel(s)) }) } }
                 }
-
                 val filtered = filterFilesV2(result.files, mode, minSize, minAge, kind, sort)
                 filtered.take(limit).forEach { file -> FileItemCard(file) { pendingFile = file } }
                 if (limit < filtered.size) OutlinedButton({ limit += 30 }, Modifier.fillMaxWidth()) { Text("Mostrar 30 más") }
@@ -189,26 +160,18 @@ fun FileCleanerSectionV2() {
 }
 
 @Composable
-private fun ScanProgressCard(title: String, subtitle: String, progress: Float, done: Int, total: Int, scanning: Boolean, onScan: () -> Unit) {
+private fun ScanProgressCard(title: String, subtitle: String, progress: Float, done: Int, total: Int, scanning: Boolean, deleting: Boolean, onScan: () -> Unit) {
     Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.primary.copy(alpha=.10f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary)
-                }
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                    Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (!scanning) IconButton(onClick = onScan) { Icon(Icons.Default.Refresh, "Actualizar") }
+                Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.primary.copy(alpha=.10f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary) }
+                Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp); Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (!scanning && !deleting) IconButton(onClick = onScan) { Icon(Icons.Default.Refresh, "Actualizar") }
             }
             if (scanning) {
                 LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(if (total > 0) "$done / $total" else "Preparando…", fontSize = 11.sp)
-                    Text("${(progress * 100).toInt()}%", fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
-                }
-            } else Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Analizar archivos") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(if (total > 0) "$done / $total" else "Preparando…", fontSize = 11.sp); Text("${(progress * 100).toInt()}%", fontWeight = FontWeight.SemiBold, fontSize = 11.sp) }
+            } else Button(onClick = onScan, enabled = !deleting, modifier = Modifier.fillMaxWidth()) { Text(if (deleting) "Eliminando…" else "Analizar archivos") }
         }
     }
 }
