@@ -8,6 +8,7 @@ import android.os.StatFs
 import android.os.storage.StorageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToLong
 
 data class StorageOverview(
     val totalBytes: Long,
@@ -22,6 +23,44 @@ data class StorageOverview(
     val usedBytes: Long get() = (totalBytes - freeBytes).coerceAtLeast(0L)
 }
 
+data class ReconciledStorage(
+    val apps: Long,
+    val images: Long,
+    val videos: Long,
+    val audio: Long,
+    val other: Long
+)
+
+object StorageCategoryReconciler {
+    /**
+     * OEMs can report category accounting on a different basis than getFreeBytes().
+     * When categories exceed displayed used bytes, scale all known categories
+     * proportionally instead of truncating whichever category happens to be last.
+     */
+    fun reconcile(used: Long, apps: Long, images: Long, videos: Long, audio: Long): ReconciledStorage {
+        val safeUsed = used.coerceAtLeast(0L)
+        val raw = longArrayOf(apps, images, videos, audio).map { it.coerceAtLeast(0L) }
+        val sum = raw.sum()
+        if (sum <= safeUsed || sum == 0L) {
+            return ReconciledStorage(raw[0], raw[1], raw[2], raw[3], (safeUsed - sum).coerceAtLeast(0L))
+        }
+        val factor = safeUsed.toDouble() / sum.toDouble()
+        val scaled = raw.map { (it * factor).roundToLong().coerceAtLeast(0L) }.toMutableList()
+        var scaledSum = scaled.sum()
+        if (scaledSum > safeUsed) {
+            var excess = scaledSum - safeUsed
+            for (i in scaled.indices.reversed()) {
+                if (excess <= 0L) break
+                val remove = minOf(excess, scaled[i])
+                scaled[i] -= remove
+                excess -= remove
+            }
+            scaledSum = scaled.sum()
+        }
+        return ReconciledStorage(scaled[0], scaled[1], scaled[2], scaled[3], (safeUsed - scaledSum).coerceAtLeast(0L))
+    }
+}
+
 class StorageOverviewAnalyzer(private val context: Context) {
 
     suspend fun load(hasUsageAccess: Boolean): StorageOverview = withContext(Dispatchers.IO) {
@@ -32,52 +71,34 @@ class StorageOverviewAnalyzer(private val context: Context) {
             .getOrElse { fallbackStatFs().second }
             .coerceIn(0L, total.coerceAtLeast(0L))
 
-        if (!hasUsageAccess) {
-            return@withContext StorageOverview(total, free, null, null, null, null, null, false)
-        }
+        if (!hasUsageAccess) return@withContext StorageOverview(total, free, null, null, null, null, null, false)
 
-        val userStats = runCatching {
-            manager.queryStatsForUser(StorageManager.UUID_DEFAULT, Process.myUserHandle())
-        }.getOrNull()
-        val external = runCatching {
-            manager.queryExternalStatsForUser(StorageManager.UUID_DEFAULT, Process.myUserHandle())
-        }.getOrNull()
-
+        val userStats = runCatching { manager.queryStatsForUser(StorageManager.UUID_DEFAULT, Process.myUserHandle()) }.getOrNull()
+        val external = runCatching { manager.queryExternalStatsForUser(StorageManager.UUID_DEFAULT, Process.myUserHandle()) }.getOrNull()
         val used = (total - free).coerceAtLeast(0L)
-        val imagesRaw = external?.imageBytes?.coerceAtLeast(0L)
-        val videosRaw = external?.videoBytes?.coerceAtLeast(0L)
-        val audioRaw = external?.audioBytes?.coerceAtLeast(0L)
 
-        // getFreeBytes() is intended for end-user display and may count reclaimable
-        // cache as effectively free. StorageStats.dataBytes includes cache. Remove
-        // cache from the Apps bucket so the visual categories use the same accounting
-        // basis as the displayed used/free values.
         val appsRaw = userStats?.let {
             (it.appBytes + (it.dataBytes - it.cacheBytes).coerceAtLeast(0L)).coerceAtLeast(0L)
         }
-
         val detailed = appsRaw != null && external != null
-        if (!detailed) {
-            return@withContext StorageOverview(total, free, null, null, null, null, null, false)
-        }
+        if (!detailed) return@withContext StorageOverview(total, free, null, null, null, null, null, false)
 
-        // OEM accounting can still differ slightly. Allocate categories against the
-        // real used total and clamp sequentially so the donut can never exceed 100%.
-        var remaining = used
-        val images = (imagesRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
-        val videos = (videosRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
-        val audio = (audioRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
-        val apps = (appsRaw ?: 0L).coerceAtMost(remaining).also { remaining -= it }
-        val other = remaining.coerceAtLeast(0L)
+        val reconciled = StorageCategoryReconciler.reconcile(
+            used = used,
+            apps = appsRaw ?: 0L,
+            images = external?.imageBytes ?: 0L,
+            videos = external?.videoBytes ?: 0L,
+            audio = external?.audioBytes ?: 0L
+        )
 
         StorageOverview(
             totalBytes = total,
             freeBytes = free,
-            appBytes = apps,
-            imageBytes = images,
-            videoBytes = videos,
-            audioBytes = audio,
-            otherBytes = other,
+            appBytes = reconciled.apps,
+            imageBytes = reconciled.images,
+            videoBytes = reconciled.videos,
+            audioBytes = reconciled.audio,
+            otherBytes = reconciled.other,
             detailed = true
         )
     }
