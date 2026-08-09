@@ -26,6 +26,7 @@ class AndroidSystemGatewayImpl(
 ) : AndroidSystemGateway {
 
     private val packageManager = context.packageManager
+    private val preferences = CleanerPreferences(context)
 
     override suspend fun hasUsageAccess(): Boolean = withContext(Dispatchers.IO) {
         val appOps = context.getSystemService(AppOpsManager::class.java)
@@ -47,6 +48,7 @@ class AndroidSystemGatewayImpl(
     }
 
     override fun openUsageAccessSettings() {
+        preferences.markUsageSettingsOpened()
         val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -66,9 +68,6 @@ class AndroidSystemGatewayImpl(
             null
         }
 
-        // Several OEMs, including some Xiaomi/HyperOS builds, can return sparse data
-        // from queryAndAggregateUsageStats() over long ranges. Query explicit buckets
-        // first, then use the aggregate API as fallback.
         val longUsage = if (usageManager != null) {
             val monthly = queryUsage(usageManager, UsageStatsManager.INTERVAL_MONTHLY, twoYearsAgo, now)
             val yearly = queryUsage(usageManager, UsageStatsManager.INTERVAL_YEARLY, twoYearsAgo, now)
@@ -104,19 +103,27 @@ class AndroidSystemGatewayImpl(
             packageManager.getInstalledApplications(0)
         }
 
-        val userApps = installed
+        val classifiedApps = installed
+            .asSequence()
             .filter { it.packageName != context.packageName }
             .filter { it.enabled }
-            .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
-
-        // queryStatsForUid() is normally faster than queryStatsForPackage(). Use it
-        // for the common one-package-per-UID case, while keeping package-level stats
-        // for shared UIDs so the same storage is not attributed to several apps.
-        val uidCounts = userApps.groupingBy { it.uid }.eachCount()
-
-        userApps.asSequence()
             .map { appInfo ->
                 val label = packageManager.getApplicationLabel(appInfo).toString()
+                ClassifiedApp(
+                    info = appInfo,
+                    label = label,
+                    isSystemComponent = SystemAppClassifier.isSystemComponent(appInfo, label)
+                )
+            }
+            .filter { preferences.showSystemApps || !it.isSystemComponent }
+            .toList()
+
+        val uidCounts = classifiedApps.groupingBy { it.info.uid }.eachCount()
+
+        classifiedApps.asSequence()
+            .map { classified ->
+                val appInfo = classified.info
+                val label = classified.label
                 val longStats = longUsage[appInfo.packageName]
                 val recentStats = recentUsage[appInfo.packageName]
                 val lastTimeUsed = listOfNotNull(
@@ -153,7 +160,8 @@ class AndroidSystemGatewayImpl(
                     null
                 }
 
-                val isProtected = appInfo.packageName in protectedPackages ||
+                val isProtected = classified.isSystemComponent ||
+                    appInfo.packageName in protectedPackages ||
                     looksSensitive(appInfo.packageName, label)
 
                 val decision = AppRecommendationEngine.evaluate(
@@ -173,7 +181,8 @@ class AndroidSystemGatewayImpl(
                     totalTimeInForegroundMs = recentStats?.totalTimeInForegroundMs,
                     recommendation = decision.recommendation,
                     reason = decision.reason,
-                    isProtected = isProtected
+                    isProtected = isProtected,
+                    isSystemComponent = classified.isSystemComponent
                 )
             }
             .sortedWith(
@@ -236,7 +245,6 @@ class AndroidSystemGatewayImpl(
             UsageAggregate(
                 lastTimeUsed = maxOf(a?.lastTimeUsed ?: 0L, b?.lastTimeUsed ?: 0L)
                     .takeIf { it > 0L },
-                // Long-range totals are not shown, so avoid double counting overlapping buckets.
                 totalTimeInForegroundMs = maxOf(
                     a?.totalTimeInForegroundMs ?: 0L,
                     b?.totalTimeInForegroundMs ?: 0L
@@ -251,6 +259,15 @@ class AndroidSystemGatewayImpl(
         } else {
             @Suppress("DEPRECATION")
             packageManager.getPackageInfo(packageName, 0)
+        }
+    }.getOrNull()
+
+    private fun applicationInfo(packageName: String): ApplicationInfo? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getApplicationInfo(packageName, 0)
         }
     }.getOrNull()
 
@@ -312,8 +329,18 @@ class AndroidSystemGatewayImpl(
         return protectedTerms.any(text::contains)
     }
 
-    @Suppress("DEPRECATION")
     override fun requestUninstall(packageName: String) {
+        val appInfo = applicationInfo(packageName)
+        if (appInfo != null) {
+            val label = runCatching { packageManager.getApplicationLabel(appInfo).toString() }
+                .getOrDefault(packageName)
+            if (SystemAppClassifier.isSystemComponent(appInfo, label)) {
+                openAppDetails(packageName)
+                return
+            }
+        }
+
+        @Suppress("DEPRECATION")
         val intent = Intent(Intent.ACTION_UNINSTALL_PACKAGE).apply {
             data = Uri.parse("package:$packageName")
             putExtra(Intent.EXTRA_RETURN_RESULT, false)
@@ -322,8 +349,22 @@ class AndroidSystemGatewayImpl(
         context.startActivity(intent)
     }
 
+    private fun openAppDetails(packageName: String) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+    }
+
     private data class UsageAggregate(
         val lastTimeUsed: Long?,
         val totalTimeInForegroundMs: Long?
+    )
+
+    private data class ClassifiedApp(
+        val info: ApplicationInfo,
+        val label: String,
+        val isSystemComponent: Boolean
     )
 }
