@@ -3,8 +3,9 @@ package mx.direkta.liacleaner.model
 data class AppCandidate(
     val name: String,
     val packageName: String,
-    val sizeLabel: String,
-    val daysSinceLastUse: Int,
+    val sizeBytes: Long?,
+    val daysSinceLastUse: Int?,
+    val totalTimeInForegroundMs: Long,
     val recommendation: Recommendation
 )
 
