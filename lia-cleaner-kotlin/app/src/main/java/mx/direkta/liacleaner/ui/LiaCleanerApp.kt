@@ -202,7 +202,7 @@ private fun HomeScreen(
                     Column(Modifier.padding(18.dp)) {
                         Text("Falta acceso de uso", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Actívalo para calcular inactividad y tamaño real de las apps.",
+                            "Actívalo para calcular inactividad, tamaño real de las apps y el desglose del almacenamiento.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
@@ -210,6 +210,13 @@ private fun HomeScreen(
                     }
                 }
             }
+        }
+
+        item {
+            StorageOverviewCard(
+                usageAccess = usageAccess,
+                onGrantUsage = onGrantUsage
+            )
         }
 
         item {
