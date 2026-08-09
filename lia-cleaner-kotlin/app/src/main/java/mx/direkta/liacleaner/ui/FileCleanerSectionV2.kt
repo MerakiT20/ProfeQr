@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,8 +60,9 @@ import java.util.Locale
 @Composable
 fun FileCleanerSectionV2() {
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val lifecycleOwner = LocalLifecycleOwner.current
-    val analyzer = remember { FileCleanerAnalyzer(context.applicationContext) }
+    val analyzer = remember { FileCleanerAnalyzer(appContext) }
     val session by FileScanSession.state.collectAsStateWithLifecycle()
     var hasAccess by remember { mutableStateOf(analyzer.hasBroadFileAccess()) }
     var mode by remember { mutableStateOf(FileMode.LARGE) }
@@ -72,6 +74,8 @@ fun FileCleanerSectionV2() {
     var pendingFile by remember { mutableStateOf<CleanerFileItem?>(null) }
     var pendingGroup by remember { mutableStateOf<DuplicateFileGroup?>(null) }
 
+    LaunchedEffect(Unit) { FileScanSession.attach(appContext) }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) hasAccess = analyzer.hasBroadFileAccess() }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -80,7 +84,7 @@ fun FileCleanerSectionV2() {
 
     fun scan(force: Boolean = false) {
         if (!analyzer.hasBroadFileAccess()) { hasAccess = false; analyzer.openBroadFileAccessSettings(); return }
-        if (force) FileScanSession.refresh(analyzer) else FileScanSession.start(analyzer)
+        if (force) FileScanSession.refresh(appContext) else FileScanSession.start(appContext)
     }
 
     pendingFile?.let { item ->
@@ -88,7 +92,7 @@ fun FileCleanerSectionV2() {
             onDismissRequest = { pendingFile = null },
             title = { Text("¿Eliminar ${item.name}?") },
             text = { Text("Se liberarán ${fmtBytes(item.sizeBytes)}. Esta acción requiere tu confirmación.") },
-            confirmButton = { TextButton(onClick = { pendingFile = null; FileScanSession.delete(analyzer, listOf(item)) }) { Text("Eliminar") } },
+            confirmButton = { TextButton(onClick = { pendingFile = null; FileScanSession.delete(appContext, analyzer, listOf(item)) }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { pendingFile = null }) { Text("Cancelar") } }
         )
     }
@@ -99,7 +103,7 @@ fun FileCleanerSectionV2() {
             onDismissRequest = { pendingGroup = null },
             title = { Text("Conservar 1 y eliminar ${copies.size} copias") },
             text = { Text("Los archivos tienen SHA-256 idéntico. Se conservará ${group.keep.name} y se liberarían ${fmtBytes(copies.sumOf { it.sizeBytes })}.") },
-            confirmButton = { TextButton(onClick = { pendingGroup = null; FileScanSession.delete(analyzer, copies) }) { Text("Eliminar copias") } },
+            confirmButton = { TextButton(onClick = { pendingGroup = null; FileScanSession.delete(appContext, analyzer, copies) }) { Text("Eliminar copias") } },
             dismissButton = { TextButton(onClick = { pendingGroup = null }) { Text("Cancelar") } }
         )
     }
@@ -113,8 +117,8 @@ fun FileCleanerSectionV2() {
         }
 
         ScanProgressCard(
-            title = if (session.scanning) session.phaseLabel else "Archivos y descargas",
-            subtitle = if (session.scanning) "Puedes cambiar de pestaña; el análisis continúa." else "Tamaño, antigüedad, tipo y duplicados exactos.",
+            title = if (session.scanning) session.phaseLabel.ifBlank { "Preparando análisis" } else "Archivos y descargas",
+            subtitle = if (session.scanning) "Trabajo persistente: puedes cambiar de pestaña o salir de LIA." else "Tamaño, antigüedad, tipo y duplicados exactos.",
             progress = session.progress, done = session.done, total = session.total,
             scanning = session.scanning, deleting = session.deleting,
             onScan = { scan(session.result != null) }
