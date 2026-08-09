@@ -15,6 +15,10 @@ on:
       - 'lia-cleaner-kotlin/**'
       - '.github/workflows/lia-cleaner-android-build.yml'
 
+concurrency:
+  group: lia-cleaner-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-lia-cleaner:
     runs-on: ubuntu-latest
