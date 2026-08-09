@@ -1,15 +1,7 @@
 package mx.direkta.liacleaner.ui
 
-import android.Manifest
-import android.app.Activity
-import android.os.Build
-import android.provider.MediaStore
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,12 +18,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
@@ -46,7 +36,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -57,7 +46,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -65,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -76,14 +63,8 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mx.direkta.liacleaner.model.AppCandidate
-import mx.direkta.liacleaner.model.PhotoGroup
-import mx.direkta.liacleaner.model.PhotoGroupKind
-import mx.direkta.liacleaner.model.PhotoItem
-import mx.direkta.liacleaner.model.PhotoScanResult
 import mx.direkta.liacleaner.model.Recommendation
 import mx.direkta.liacleaner.model.RecommendationReason
 import mx.direkta.liacleaner.photo.AdvancedPhotoAnalyzer
@@ -108,9 +89,7 @@ fun LiaCleanerApp(systemGateway: AndroidSystemGateway) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val photoAnalyzer = remember { PhotoAnalyzer(context.applicationContext) }
-    val advancedPhotoAnalyzer = remember {
-        AdvancedPhotoAnalyzer(context.applicationContext, photoAnalyzer)
-    }
+    val advancedPhotoAnalyzer = remember { AdvancedPhotoAnalyzer(context.applicationContext, photoAnalyzer) }
 
     fun refreshApps() {
         scope.launch {
@@ -126,9 +105,7 @@ fun LiaCleanerApp(systemGateway: AndroidSystemGateway) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        refreshApps()
-    }
+    LaunchedEffect(Unit) { refreshApps() }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -162,11 +139,7 @@ fun LiaCleanerApp(systemGateway: AndroidSystemGateway) {
             }
         }
     ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
+        Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
                 0 -> HomeScreen(
                     apps = apps,
@@ -211,9 +184,7 @@ private fun HomeScreen(
     val score = (100 - candidates.size * 2).coerceIn(45, 100)
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item { Spacer(Modifier.height(12.dp)) }
@@ -226,9 +197,7 @@ private fun HomeScreen(
             item {
                 Card(
                     shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                    )
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
                 ) {
                     Column(Modifier.padding(18.dp)) {
                         Text("Falta acceso de uso", fontWeight = FontWeight.SemiBold)
@@ -250,9 +219,7 @@ private fun HomeScreen(
                 elevation = CardDefaults.cardElevation(2.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(22.dp),
+                    modifier = Modifier.fillMaxWidth().padding(22.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -278,8 +245,7 @@ private fun HomeScreen(
         item {
             Text("Espacio liberable en apps", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                if (candidates.isNotEmpty() && candidates.none { it.sizeBytes != null }) "—"
-                else formatBytes(recoverableBytes),
+                if (candidates.isNotEmpty() && candidates.none { it.sizeBytes != null }) "—" else formatBytes(recoverableBytes),
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.secondary
@@ -296,13 +262,9 @@ private fun HomeScreen(
         item {
             Button(
                 onClick = onReviewApps,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp)
-            ) {
-                Text("Revisar aplicaciones")
-            }
+            ) { Text("Revisar aplicaciones") }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -356,6 +318,7 @@ private fun AppsScreen(
     val recoverableBytes = recoverableKnown.sum()
     val reviewApps = apps.count { it.recommendation == Recommendation.REVIEW }
     val recentApps = apps.count { it.recommendation == Recommendation.KEEP && !it.isProtected }
+    val protectedApps = apps.count { it.isProtected }
     val noDataApps = apps.count {
         it.reason == RecommendationReason.USAGE_DATA_UNAVAILABLE ||
             it.reason == RecommendationReason.USAGE_ACCESS_REQUIRED
@@ -372,9 +335,7 @@ private fun AppsScreen(
             .toList()
 
         when (sortMode) {
-            AppSortMode.INACTIVITY -> filtered.sortedByDescending {
-                it.daysSinceLastUse ?: it.installAgeDays ?: -1
-            }
+            AppSortMode.INACTIVITY -> filtered.sortedByDescending { it.daysSinceLastUse ?: it.installAgeDays ?: -1 }
             AppSortMode.SIZE -> filtered.sortedByDescending { it.sizeBytes ?: -1L }
             AppSortMode.LOW_USAGE -> filtered.sortedWith(
                 compareBy<AppCandidate> { it.totalTimeInForegroundMs ?: Long.MAX_VALUE }
@@ -387,28 +348,28 @@ private fun AppsScreen(
     pendingUninstall?.let { app ->
         AlertDialog(
             onDismissRequest = { pendingUninstall = null },
-            title = { Text("Desinstalar ${app.name}?") },
+            title = { Text(if (app.isSystemComponent) "Abrir ${app.name}?" else "Desinstalar ${app.name}?") },
             text = {
-                Text("LIA Cleaner abrirá el desinstalador de Android. Android te pedirá la confirmación final.")
+                Text(
+                    if (app.isSystemComponent) {
+                        "Es un componente protegido. LIA abrirá su ficha de Android y no intentará desinstalarlo."
+                    } else {
+                        "LIA Cleaner abrirá el desinstalador de Android. Android pedirá la confirmación final."
+                    }
+                )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingUninstall = null
-                        onUninstall(app.packageName)
-                    }
-                ) { Text("Desinstalar") }
+                TextButton(onClick = {
+                    pendingUninstall = null
+                    onUninstall(app.packageName)
+                }) { Text(if (app.isSystemComponent) "Abrir ficha" else "Desinstalar") }
             },
-            dismissButton = {
-                TextButton(onClick = { pendingUninstall = null }) { Text("Cancelar") }
-            }
+            dismissButton = { TextButton(onClick = { pendingUninstall = null }) { Text("Cancelar") } }
         )
     }
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 14.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item { Spacer(Modifier.height(10.dp)) }
@@ -421,14 +382,12 @@ private fun AppsScreen(
                 Column {
                     Text("Aplicaciones", fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "${apps.size} instaladas por el usuario",
+                        "${apps.size} visibles en el análisis",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Actualizar")
-                }
+                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "Actualizar") }
             }
         }
 
@@ -436,9 +395,7 @@ private fun AppsScreen(
             item {
                 Card(
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                    )
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -458,18 +415,34 @@ private fun AppsScreen(
             }
         }
 
-        if (usageAccess && noDataApps > 0 && noDataApps >= (apps.size - apps.count { it.isProtected }).coerceAtLeast(1)) {
+        if (apps.any { it.isSystemComponent }) {
             item {
                 Card(
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
-                    )
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Vista de sistema activa", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "$protectedApps componentes protegidos visibles. No cuentan como espacio liberable ni se recomiendan para eliminar.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        if (usageAccess && noDataApps > 0 && noDataApps >= (apps.size - protectedApps).coerceAtLeast(1)) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f))
                 ) {
                     Column(Modifier.padding(14.dp)) {
                         Text("Permiso activo, pero faltan estadísticas", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Android/HyperOS no devolvió un historial utilizable. LIA no inventará candidatas hasta tener evidencia suficiente.",
+                            "Android/HyperOS no devolvió historial utilizable. LIA no inventará candidatas.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -534,20 +507,16 @@ private fun AppsScreen(
                 }
             }
         }
-
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
 
         if (!loading && onlyCandidates && visibleApps.isEmpty()) {
             item {
-                Card(
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White)
-                ) {
+                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
                         Text("No hay candidatas con los datos actuales", fontWeight = FontWeight.SemiBold)
                         Text(
                             if (!usageAccess) "Activa el acceso de uso y vuelve a esta pantalla."
-                            else "Quita este filtro para revisar las apps sin historial o con evidencia insuficiente.",
+                            else "Quita el filtro para revisar las apps con evidencia insuficiente.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -557,7 +526,7 @@ private fun AppsScreen(
         }
 
         items(visibleApps, key = { it.packageName }) { app ->
-            AppRow(app = app, onUninstall = { pendingUninstall = app })
+            AppRow(app = app, onAction = { pendingUninstall = app })
         }
         item { Spacer(Modifier.height(10.dp)) }
     }
@@ -580,12 +549,7 @@ private fun AppStatsSummary(
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text("Espacio que podrías liberar", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(3.dp))
-            Text(
-                recoverable,
-                fontSize = 30.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.secondary
-            )
+            Text(recoverable, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
             Text(
                 "$candidateCount candidatas · tamaño conocido en $knownSizes",
                 fontSize = 12.sp,
@@ -617,42 +581,19 @@ private fun CompactStat(title: String, value: String, modifier: Modifier = Modif
 }
 
 @Composable
-private fun MiniStatCard(title: String, value: String, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp)) {
-            Text(title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
 private fun SortChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, fontSize = 12.sp) }
-    )
+    FilterChip(selected = selected, onClick = onClick, label = { Text(label, fontSize = 12.sp) })
 }
 
 @Composable
-private fun AppRow(app: AppCandidate, onUninstall: () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
+private fun AppRow(app: AppCandidate, onAction: () -> Unit) {
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             AppIcon(app.packageName)
-            Column(
-                modifier = Modifier.weight(1f).padding(horizontal = 10.dp)
-            ) {
+            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                 Text(app.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(
                     usageDescription(app),
@@ -668,10 +609,10 @@ private fun AppRow(app: AppCandidate, onUninstall: () -> Unit) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(formatBytes(app.sizeBytes), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                IconButton(onClick = onUninstall, modifier = Modifier.size(36.dp)) {
+                IconButton(onClick = onAction, modifier = Modifier.size(36.dp)) {
                     Icon(
-                        Icons.Default.DeleteOutline,
-                        contentDescription = "Desinstalar ${app.name}",
+                        if (app.isSystemComponent) Icons.Default.Info else Icons.Default.DeleteOutline,
+                        contentDescription = if (app.isSystemComponent) "Ver ${app.name}" else "Desinstalar ${app.name}",
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -705,7 +646,7 @@ private fun recommendationDescription(app: AppCandidate): String = when (app.rea
     RecommendationReason.NO_USAGE_RECORDED_RECENT_APP -> "Conviene revisar: sin uso registrado"
     RecommendationReason.USAGE_DATA_UNAVAILABLE -> "Android no devolvió historial suficiente"
     RecommendationReason.USAGE_ACCESS_REQUIRED -> "Falta permiso de estadísticas de uso"
-    RecommendationReason.PROTECTED_APP -> "Protegida de recomendaciones automáticas"
+    RecommendationReason.PROTECTED_APP -> if (app.isSystemComponent) "Sistema · protegida" else "Protegida de recomendaciones automáticas"
     RecommendationReason.USED_RECENTLY -> "Uso reciente"
 }
 
@@ -714,10 +655,7 @@ private fun AppIcon(packageName: String) {
     val context = LocalContext.current
     val bitmap = remember(packageName) {
         runCatching {
-            context.packageManager
-                .getApplicationIcon(packageName)
-                .toBitmap(width = 96, height = 96)
-                .asImageBitmap()
+            context.packageManager.getApplicationIcon(packageName).toBitmap(width = 96, height = 96).asImageBitmap()
         }.getOrNull()
     }
 
@@ -730,14 +668,9 @@ private fun AppIcon(packageName: String) {
         )
     } else {
         Box(
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
+            modifier = Modifier.size(42.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
             contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary)
-        }
+        ) { Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary) }
     }
 }
 
@@ -759,7 +692,7 @@ private fun CleanScreen(
         item {
             Text("Limpieza guiada", fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text(
-                "LIA recomienda; tú decides qué eliminar.",
+                "Apps, fotos, archivos y descargas. LIA analiza; tú decides qué borrar.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -771,431 +704,13 @@ private fun CleanScreen(
             )
         }
         item {
-            PhotoCleanerSection(
+            PhotoCleanerSectionV2(
                 photoAnalyzer = photoAnalyzer,
                 advancedPhotoAnalyzer = advancedPhotoAnalyzer
             )
         }
-        item { CleanAction("Archivos grandes", "Próxima fase", onClick = {}) }
-        item { CleanAction("Descargas", "Próxima fase", onClick = {}) }
+        item { FileCleanerSection() }
         item { Spacer(Modifier.height(12.dp)) }
-    }
-}
-
-@Composable
-private fun PhotoCleanerSection(
-    photoAnalyzer: PhotoAnalyzer,
-    advancedPhotoAnalyzer: AdvancedPhotoAnalyzer
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var photoAccess by remember { mutableStateOf(photoAnalyzer.hasPhotoAccess()) }
-    var quickResult by remember { mutableStateOf<PhotoScanResult?>(null) }
-    var aiGroups by remember { mutableStateOf<List<PhotoGroup>>(emptyList()) }
-    var scanning by remember { mutableStateOf(false) }
-    var advancedScanning by remember { mutableStateOf(false) }
-    var done by remember { mutableIntStateOf(0) }
-    var total by remember { mutableIntStateOf(0) }
-    var message by remember { mutableStateOf<String?>(null) }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        photoAccess = photoAnalyzer.hasPhotoAccess()
-        message = if (photoAccess) {
-            "Acceso concedido. Ya puedes analizar las fotos disponibles."
-        } else {
-            "Android no concedió acceso a las fotos."
-        }
-    }
-
-    val deleteLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            quickResult = null
-            aiGroups = emptyList()
-            message = "Eliminación completada. Analiza de nuevo para actualizar los resultados."
-        }
-    }
-
-    fun requestPhotoAccess() {
-        val permissions = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-            )
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES
-            )
-            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        permissionLauncher.launch(permissions)
-    }
-
-    fun runQuickScan() {
-        if (!photoAnalyzer.hasPhotoAccess()) {
-            photoAccess = false
-            requestPhotoAccess()
-            return
-        }
-        scope.launch {
-            scanning = true
-            aiGroups = emptyList()
-            message = null
-            done = 0
-            total = 0
-            runCatching {
-                photoAnalyzer.quickScan { progressDone, progressTotal ->
-                    withContext(Dispatchers.Main) {
-                        done = progressDone
-                        total = progressTotal
-                    }
-                }
-            }.onSuccess {
-                quickResult = it
-                message = "Análisis rápido terminado."
-            }.onFailure {
-                message = it.message ?: "No fue posible analizar las fotos."
-            }
-            scanning = false
-        }
-    }
-
-    fun runAdvancedScan() {
-        val quick = quickResult ?: return
-        scope.launch {
-            advancedScanning = true
-            message = null
-            done = 0
-            total = 0
-            runCatching {
-                advancedPhotoAnalyzer.analyze(quick) { progressDone, progressTotal ->
-                    withContext(Dispatchers.Main) {
-                        done = progressDone
-                        total = progressTotal
-                    }
-                }
-            }.onSuccess {
-                aiGroups = it
-                message = "Análisis avanzado terminado."
-            }.onFailure {
-                message = it.message ?: "No fue posible completar el análisis avanzado."
-            }
-            advancedScanning = false
-        }
-    }
-
-    fun deletePhotos(photos: List<PhotoItem>) {
-        if (photos.isEmpty()) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val pendingIntent = MediaStore.createDeleteRequest(
-                context.contentResolver,
-                photos.map { it.uri }
-            )
-            deleteLauncher.launch(
-                IntentSenderRequest.Builder(pendingIntent.intentSender).build()
-            )
-        } else {
-            scope.launch(Dispatchers.IO) {
-                photos.forEach { photo ->
-                    runCatching { context.contentResolver.delete(photo.uri, null, null) }
-                }
-                withContext(Dispatchers.Main) {
-                    quickResult = null
-                    aiGroups = emptyList()
-                    message = "Eliminación completada. Analiza de nuevo para actualizar."
-                }
-            }
-        }
-    }
-
-    Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text("Fotos duplicadas y similares", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text(
-                        "Primero usa hashes: rápido, local y de bajo consumo.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            if (!photoAccess) {
-                Text(
-                    "Necesitamos permiso para leer las fotos que quieras analizar. En Android 14+ puedes permitir toda la biblioteca o solo una selección.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = ::requestPhotoAccess, modifier = Modifier.fillMaxWidth()) {
-                    Text("Dar acceso a fotos")
-                }
-            } else {
-                Button(
-                    onClick = ::runQuickScan,
-                    enabled = !scanning && !advancedScanning,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (scanning) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.size(8.dp))
-                        Text(if (total > 0) "$done / $total" else "Analizando…")
-                    } else {
-                        Text(if (quickResult == null) "Analizar fotos" else "Analizar de nuevo")
-                    }
-                }
-            }
-
-            message?.let {
-                Spacer(Modifier.height(8.dp))
-                Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
-            quickResult?.let { result ->
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MiniStatCard("Fotos", result.photos.size.toString(), Modifier.weight(1f))
-                    MiniStatCard("Exactas", result.exactGroups.size.toString(), Modifier.weight(1f))
-                    MiniStatCard("Casi iguales", result.nearGroups.size.toString(), Modifier.weight(1f))
-                }
-                Spacer(Modifier.height(8.dp))
-                MiniStatCard(
-                    title = "Espacio potencialmente recuperable",
-                    value = formatBytes(result.recoverableBytes),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (result.quickGroups.isEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text("Los hashes no encontraron duplicados o fotos casi idénticas.")
-                } else {
-                    Spacer(Modifier.height(12.dp))
-                    Text("Resultados por hash", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Los duplicados exactos vienen preseleccionados. En fotos casi iguales debes elegir qué borrar.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        result.quickGroups.forEach { group ->
-                            PhotoGroupCard(group, photoAnalyzer, ::deletePhotos)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-                Card(
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
-                    )
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
-                            Text(
-                                "Análisis avanzado con IA",
-                                modifier = Modifier.padding(start = 8.dp),
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Busca similitudes que los hashes pueden no detectar, como recortes, ediciones o cambios de encuadre. Requiere más tiempo, memoria y batería. Todo se procesa en este dispositivo; tus fotos no se envían a Internet.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = ::runAdvancedScan,
-                            enabled = !scanning && !advancedScanning,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (advancedScanning) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(Modifier.size(8.dp))
-                                Text(if (total > 0) "$done / $total" else "Analizando con IA…")
-                            } else {
-                                Text(if (aiGroups.isEmpty()) "Iniciar análisis avanzado" else "Repetir análisis avanzado")
-                            }
-                        }
-                    }
-                }
-
-                if (aiGroups.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text("Similares encontradas por IA", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Revisión manual obligatoria: LIA no preselecciona fotos similares para borrar.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        aiGroups.forEach { group ->
-                            PhotoGroupCard(group, photoAnalyzer, ::deletePhotos)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PhotoGroupCard(
-    group: PhotoGroup,
-    analyzer: PhotoAnalyzer,
-    onDelete: (List<PhotoItem>) -> Unit
-) {
-    val defaultSelection = remember(group.id) {
-        if (group.kind == PhotoGroupKind.EXACT) {
-            group.photos.drop(1).mapTo(mutableSetOf()) { it.id }
-        } else {
-            mutableSetOf()
-        }
-    }
-    var selectedIds by remember(group.id) { mutableStateOf(defaultSelection.toSet()) }
-
-    val title = when (group.kind) {
-        PhotoGroupKind.EXACT -> "Duplicado exacto"
-        PhotoGroupKind.NEAR_DUPLICATE -> "Casi idénticas"
-        PhotoGroupKind.AI_SIMILAR -> "Similares con IA"
-    }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
-    ) {
-        Column(Modifier.fillMaxWidth().padding(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("$title · ${group.photos.size} fotos", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Hasta ${formatBytes(group.recoverableBytes)} recuperables",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-                group.similarity?.let { score ->
-                    Text("${(score * 100).toInt()}%", fontWeight = FontWeight.Bold)
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(group.photos, key = { it.id }) { photo ->
-                    PhotoThumbnail(
-                        photo = photo,
-                        analyzer = analyzer,
-                        selected = photo.id in selectedIds,
-                        onToggle = {
-                            selectedIds = if (photo.id in selectedIds) {
-                                selectedIds - photo.id
-                            } else {
-                                selectedIds + photo.id
-                            }
-                        }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            val helper = when (group.kind) {
-                PhotoGroupKind.EXACT -> "LIA propone conservar la primera copia y borrar las demás."
-                PhotoGroupKind.NEAR_DUPLICATE -> "Revisa las miniaturas y marca solo las que quieras borrar."
-                PhotoGroupKind.AI_SIMILAR -> "La IA detectó parecido visual; revisa antes de seleccionar."
-            }
-            Text(helper, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-            if (selectedIds.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                OutlinedButton(
-                    onClick = {
-                        onDelete(group.photos.filter { it.id in selectedIds })
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = null)
-                    Spacer(Modifier.size(6.dp))
-                    Text("Eliminar seleccionadas (${selectedIds.size})")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PhotoThumbnail(
-    photo: PhotoItem,
-    analyzer: PhotoAnalyzer,
-    selected: Boolean,
-    onToggle: () -> Unit
-) {
-    val image by produceState<ImageBitmap?>(initialValue = null, key1 = photo.id) {
-        value = withContext(Dispatchers.IO) {
-            analyzer.loadPreview(photo.uri, 180)?.asImageBitmap()
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .size(96.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onToggle)
-    ) {
-        if (image != null) {
-            Image(
-                bitmap = image!!,
-                contentDescription = photo.name,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            Icon(
-                Icons.Default.Image,
-                contentDescription = null,
-                modifier = Modifier.align(Alignment.Center),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
-            )
-            Icon(
-                Icons.Default.CheckCircle,
-                contentDescription = "Seleccionada",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.TopEnd).padding(5.dp)
-            )
-        }
-        Text(
-            formatBytes(photo.sizeBytes),
-            fontSize = 9.sp,
-            color = Color.White,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .padding(horizontal = 4.dp, vertical = 2.dp)
-        )
     }
 }
 
@@ -1237,6 +752,5 @@ private fun formatBytes(bytes: Long?): String {
     if (kb < 1024.0) return String.format("%.0f KB", kb)
     val mb = kb / 1024.0
     if (mb < 1024.0) return String.format("%.1f MB", mb)
-    val gb = mb / 1024.0
-    return String.format("%.2f GB", gb)
+    return String.format("%.2f GB", mb / 1024.0)
 }
