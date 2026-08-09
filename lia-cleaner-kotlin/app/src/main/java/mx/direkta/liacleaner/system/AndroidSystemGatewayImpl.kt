@@ -1,20 +1,25 @@
 package mx.direkta.liacleaner.system
 
+import android.accounts.AccountManager
 import android.app.AppOpsManager
 import android.app.usage.StorageStatsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
+import android.provider.Telephony
+import android.telecom.TelecomManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import mx.direkta.liacleaner.model.AppCandidate
-import mx.direkta.liacleaner.model.Recommendation
+import mx.direkta.liacleaner.model.AppRecommendationEngine
+import java.io.File
 
 class AndroidSystemGatewayImpl(
     private val context: Context
@@ -61,14 +66,35 @@ class AndroidSystemGatewayImpl(
             null
         }
 
-        val lastUseMap = usageManager?.queryAndAggregateUsageStats(twoYearsAgo, now) ?: emptyMap()
-        val recentUsageMap = usageManager?.queryAndAggregateUsageStats(ninetyDaysAgo, now) ?: emptyMap()
+        // Some OEMs are unreliable with queryAndAggregateUsageStats() over long ranges.
+        // Query explicit buckets and merge them, then use the aggregate API only as fallback.
+        val longUsage = if (usageManager != null) {
+            val monthly = queryUsage(usageManager, UsageStatsManager.INTERVAL_MONTHLY, twoYearsAgo, now)
+            val yearly = queryUsage(usageManager, UsageStatsManager.INTERVAL_YEARLY, twoYearsAgo, now)
+            mergeUsage(monthly, yearly)
+                .ifEmpty { queryAggregateFallback(usageManager, twoYearsAgo, now) }
+        } else {
+            emptyMap()
+        }
+
+        val recentUsage = if (usageManager != null) {
+            queryUsage(usageManager, UsageStatsManager.INTERVAL_DAILY, ninetyDaysAgo, now)
+                .ifEmpty { queryAggregateFallback(usageManager, ninetyDaysAgo, now) }
+        } else {
+            emptyMap()
+        }
+
+        val usageDatasetAvailable = usageAllowed && (longUsage.values + recentUsage.values).any {
+            (it.lastTimeUsed ?: 0L) > 0L || (it.totalTimeInForegroundMs ?: 0L) > 0L
+        }
 
         val storageManager = if (usageAllowed) {
             context.getSystemService(StorageStatsManager::class.java)
         } else {
             null
         }
+
+        val protectedPackages = protectedPackages()
 
         val installed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
@@ -82,12 +108,21 @@ class AndroidSystemGatewayImpl(
             .filter { it.enabled }
             .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
             .map { appInfo ->
-                val longStats = lastUseMap[appInfo.packageName]
-                val recentStats = recentUsageMap[appInfo.packageName]
-                val lastTimeUsed = longStats?.lastTimeUsed?.takeIf { it > 0L }
+                val longStats = longUsage[appInfo.packageName]
+                val recentStats = recentUsage[appInfo.packageName]
+                val lastTimeUsed = listOfNotNull(
+                    longStats?.lastTimeUsed,
+                    recentStats?.lastTimeUsed
+                ).maxOrNull()?.takeIf { it > 0L }
+
                 val daysSinceLastUse = lastTimeUsed?.let {
                     ((now - it).coerceAtLeast(0L) / dayMs).toInt()
                 }
+
+                val packageInfo = packageInfo(appInfo.packageName)
+                val installAgeDays = packageInfo?.firstInstallTime
+                    ?.takeIf { it > 0L && it <= now }
+                    ?.let { ((now - it) / dayMs).toInt() }
 
                 val sizeBytes = if (storageManager != null) {
                     runCatching {
@@ -97,33 +132,152 @@ class AndroidSystemGatewayImpl(
                             Process.myUserHandle()
                         )
                         storageStats.appBytes + storageStats.dataBytes + storageStats.cacheBytes
-                    }.getOrNull()
+                    }.getOrNull() ?: installedApkBytes(appInfo)
                 } else {
                     null
                 }
 
-                val recommendation = when {
-                    !usageAllowed -> Recommendation.REVIEW
-                    daysSinceLastUse == null -> Recommendation.REVIEW
-                    daysSinceLastUse >= 180 -> Recommendation.REMOVE
-                    daysSinceLastUse >= 90 -> Recommendation.REVIEW
-                    else -> Recommendation.KEEP
-                }
+                val isProtected = appInfo.packageName in protectedPackages
+                val decision = AppRecommendationEngine.evaluate(
+                    usageAccess = usageAllowed,
+                    usageDatasetAvailable = usageDatasetAvailable,
+                    daysSinceLastUse = daysSinceLastUse,
+                    installAgeDays = installAgeDays,
+                    isProtected = isProtected
+                )
 
                 AppCandidate(
                     name = packageManager.getApplicationLabel(appInfo).toString(),
                     packageName = appInfo.packageName,
                     sizeBytes = sizeBytes,
                     daysSinceLastUse = daysSinceLastUse,
-                    totalTimeInForegroundMs = recentStats?.totalTimeInForeground ?: 0L,
-                    recommendation = recommendation
+                    installAgeDays = installAgeDays,
+                    totalTimeInForegroundMs = recentStats?.totalTimeInForegroundMs,
+                    recommendation = decision.recommendation,
+                    reason = decision.reason,
+                    isProtected = isProtected
                 )
             }
             .sortedWith(
-                compareByDescending<AppCandidate> { it.daysSinceLastUse ?: -1 }
-                    .thenByDescending { it.sizeBytes ?: 0L }
+                compareByDescending<AppCandidate> {
+                    it.daysSinceLastUse ?: it.installAgeDays ?: -1
+                }.thenByDescending { it.sizeBytes ?: 0L }
             )
             .toList()
+    }
+
+    private fun queryUsage(
+        manager: UsageStatsManager,
+        interval: Int,
+        begin: Long,
+        end: Long
+    ): Map<String, UsageAggregate> {
+        val stats = runCatching {
+            manager.queryUsageStats(interval, begin, end)
+        }.getOrNull().orEmpty()
+
+        if (stats.isEmpty()) return emptyMap()
+
+        val output = mutableMapOf<String, UsageAggregate>()
+        stats.forEach { stat ->
+            val previous = output[stat.packageName]
+            val last = maxOf(previous?.lastTimeUsed ?: 0L, stat.lastTimeUsed)
+            val total = (previous?.totalTimeInForegroundMs ?: 0L) + stat.totalTimeInForeground
+            output[stat.packageName] = UsageAggregate(
+                lastTimeUsed = last.takeIf { it > 0L },
+                totalTimeInForegroundMs = total
+            )
+        }
+        return output
+    }
+
+    private fun queryAggregateFallback(
+        manager: UsageStatsManager,
+        begin: Long,
+        end: Long
+    ): Map<String, UsageAggregate> = runCatching {
+        manager.queryAndAggregateUsageStats(begin, end).mapValues { (_, stat) ->
+            UsageAggregate(
+                lastTimeUsed = stat.lastTimeUsed.takeIf { it > 0L },
+                totalTimeInForegroundMs = stat.totalTimeInForeground
+            )
+        }
+    }.getOrDefault(emptyMap())
+
+    private fun mergeUsage(
+        first: Map<String, UsageAggregate>,
+        second: Map<String, UsageAggregate>
+    ): Map<String, UsageAggregate> {
+        if (first.isEmpty()) return second
+        if (second.isEmpty()) return first
+
+        val keys = first.keys + second.keys
+        return keys.associateWith { packageName ->
+            val a = first[packageName]
+            val b = second[packageName]
+            UsageAggregate(
+                lastTimeUsed = maxOf(a?.lastTimeUsed ?: 0L, b?.lastTimeUsed ?: 0L)
+                    .takeIf { it > 0L },
+                // Long-range totals are not shown, so avoid double counting overlapping buckets.
+                totalTimeInForegroundMs = maxOf(
+                    a?.totalTimeInForegroundMs ?: 0L,
+                    b?.totalTimeInForegroundMs ?: 0L
+                )
+            )
+        }
+    }
+
+    private fun packageInfo(packageName: String): PackageInfo? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0)
+        }
+    }.getOrNull()
+
+    private fun installedApkBytes(appInfo: ApplicationInfo): Long? = runCatching {
+        val paths = buildList {
+            appInfo.sourceDir?.let(::add)
+            appInfo.splitSourceDirs?.let(::addAll)
+        }
+        paths.sumOf { File(it).length().coerceAtLeast(0L) }.takeIf { it > 0L }
+    }.getOrNull()
+
+    @Suppress("DEPRECATION")
+    private fun protectedPackages(): Set<String> {
+        val output = mutableSetOf<String>()
+
+        runCatching {
+            packageManager.resolveActivity(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+                PackageManager.MATCH_DEFAULT_ONLY
+            )?.activityInfo?.packageName
+        }.getOrNull()?.let(output::add)
+
+        runCatching {
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+                ?.substringBefore('/')
+        }.getOrNull()?.takeIf { it.isNotBlank() }?.let(output::add)
+
+        runCatching { Telephony.Sms.getDefaultSmsPackage(context) }
+            .getOrNull()?.let(output::add)
+
+        runCatching { context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage }
+            .getOrNull()?.let(output::add)
+
+        runCatching {
+            packageManager.resolveActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")),
+                PackageManager.MATCH_DEFAULT_ONLY
+            )?.activityInfo?.packageName
+        }.getOrNull()?.let(output::add)
+
+        runCatching { AccountManager.get(context).authenticatorTypes.toList() }
+            .getOrDefault(emptyList())
+            .mapNotNullTo(output) { it.packageName }
+
+        return output
     }
 
     @Suppress("DEPRECATION")
@@ -135,4 +289,9 @@ class AndroidSystemGatewayImpl(
         }
         context.startActivity(intent)
     }
+
+    private data class UsageAggregate(
+        val lastTimeUsed: Long?,
+        val totalTimeInForegroundMs: Long?
+    )
 }
