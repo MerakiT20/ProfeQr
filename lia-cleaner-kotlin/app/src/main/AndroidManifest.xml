@@ -17,6 +17,8 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/lia_cleaner_logo"
+        android:roundIcon="@drawable/lia_cleaner_logo"
         android:label="LIA Cleaner"
         android:supportsRtl="true"
         android:theme="@style/Theme.LIACleaner">
