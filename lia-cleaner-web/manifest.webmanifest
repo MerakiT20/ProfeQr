@@ -1,0 +1,10 @@
+{
+  "name":"LIA Cleaner",
+  "short_name":"LIA Cleaner",
+  "start_url":"./index.html",
+  "display":"standalone",
+  "background_color":"#f5f9ff",
+  "theme_color":"#f7fbff",
+  "description":"Prototipo web instalable de limpieza guiada y diagnóstico de almacenamiento.",
+  "icons":[]
+}
