@@ -152,7 +152,6 @@ object PhotoScanSession {
         _state.value = _state.value.copy(advancedScanning = true, done = 0, total = 0, message = "Preparando análisis avanzado…")
     }
 
-    // Compatibility overloads used by the already-tested V3 Compose screen.
     fun startQuick(analyzer: PhotoAnalyzer) {
         val context = appContext ?: return
         startQuick(context)
@@ -161,6 +160,32 @@ object PhotoScanSession {
     fun startAdvanced(analyzer: AdvancedPhotoAnalyzer) {
         val context = appContext ?: return
         startAdvanced(context)
+    }
+
+    fun removeDeleted(context: Context, deletedIds: Set<Long>, message: String = "Eliminación completada.") {
+        if (deletedIds.isEmpty()) return
+        val app = context.applicationContext
+        val current = _state.value.quickResult ?: return
+        val remainingPhotos = current.photos.filterNot { it.id in deletedIds }
+        val byId = remainingPhotos.associateBy { it.id }
+        fun prune(groups: List<PhotoGroup>): List<PhotoGroup> = groups.mapNotNull { group ->
+            val members = group.photos.mapNotNull { byId[it.id] }
+            if (members.size > 1) group.copy(photos = members) else null
+        }
+        val updatedQuick = current.copy(
+            photos = remainingPhotos,
+            exactGroups = prune(current.exactGroups),
+            nearGroups = prune(current.nearGroups)
+        )
+        val updatedAi = prune(_state.value.aiGroups)
+        PhotoScanCache.save(app, updatedQuick, updatedAi)
+        _state.value = _state.value.copy(
+            quickResult = updatedQuick,
+            aiGroups = updatedAi,
+            done = remainingPhotos.size,
+            total = remainingPhotos.size,
+            message = message
+        )
     }
 
     fun invalidateResults(context: Context, message: String = "Contenido actualizado. Analiza de nuevo para verificar resultados.") {
