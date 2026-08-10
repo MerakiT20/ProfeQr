@@ -15,14 +15,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -38,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -56,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -108,13 +114,21 @@ fun LiaCleanerAppNext(systemGateway: AndroidSystemGateway, onOpenSettings: () ->
 
     fun openClean(focus: CleanFocus) { cleanFocus = focus; tab = 2 }
 
+    val navColors = NavigationBarItemDefaults.colors(
+        selectedIconColor = MaterialTheme.colorScheme.secondary,
+        selectedTextColor = MaterialTheme.colorScheme.secondary,
+        indicatorColor = Color.Transparent,
+        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Default.Home, null) }, label = { Text("Inicio") })
-                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Default.Apps, null) }, label = { Text("Apps") })
-                NavigationBarItem(tab == 2, { tab = 2; cleanFocus = CleanFocus.OVERVIEW }, { Icon(Icons.Default.CleaningServices, null) }, label = { Text("Limpiar") })
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Default.Home, null) }, label = { Text("Inicio") }, colors = navColors)
+                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Default.Apps, null) }, label = { Text("Apps") }, colors = navColors)
+                NavigationBarItem(tab == 2, { tab = 2; cleanFocus = CleanFocus.OVERVIEW }, { Icon(Icons.Default.CleaningServices, null) }, label = { Text("Limpiar") }, colors = navColors)
             }
         }
     ) { padding ->
@@ -154,12 +168,19 @@ fun LiaCleanerAppNext(systemGateway: AndroidSystemGateway, onOpenSettings: () ->
 @Composable
 private fun ScreenHeader(title: String, subtitle: String? = null, onSettings: () -> Unit, onBack: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Volver") }
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            subtitle?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (onBack != null) {
+            Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
+                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Volver") }
+            }
+            Spacer(Modifier.size(10.dp))
         }
-        IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Configuración") }
+        Column(Modifier.weight(1f)) {
+            subtitle?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(title, style = MaterialTheme.typography.headlineLarge)
+        }
+        Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Configuración") }
+        }
     }
 }
 
@@ -170,27 +191,29 @@ private fun NextHomeScreen(
 ) {
     val candidates = apps.filter { it.recommendation == Recommendation.REMOVE }
     val recoverable = candidates.mapNotNull { it.sizeBytes }.sum()
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Spacer(Modifier.height(10.dp)) }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Spacer(Modifier.height(12.dp)) }
         item { ScreenHeader("LIA Cleaner", "Buen día", onOpenSettings) }
         if (!usageAccess) item {
-            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = .08f))) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("Falta acceso de uso", fontWeight = FontWeight.SemiBold)
-                    Text("Actívalo para analizar apps y almacenamiento con mayor precisión.", fontSize = 12.sp)
-                    TextButton(onClick = onGrantUsage) { Text("Dar acceso") }
+            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Completa el análisis", fontWeight = FontWeight.SemiBold)
+                        Text("Activa acceso de uso para datos de apps y almacenamiento.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = onGrantUsage) { Text("Activar") }
                 }
             }
         }
         item { StorageOverviewCard(usageAccess, onGrantUsage, onStorage) }
         item {
-            Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = .08f))) {
-                Column(Modifier.fillMaxWidth().padding(18.dp)) {
-                    Text("Espacio recuperable", fontWeight = FontWeight.Bold)
+            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Puedes liberar", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(nextBytes(recoverable), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-                    Text("${candidates.size} apps candidatas para revisar", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = onReviewApps, modifier = Modifier.fillMaxWidth()) { Text("Ver recomendaciones") }
+                    Text("${candidates.size} aplicaciones candidatas", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Button(onClick = onReviewApps, modifier = Modifier.fillMaxWidth()) { Text("Revisar aplicaciones") }
                 }
             }
         }
@@ -225,11 +248,16 @@ private fun NextAppsScreen(
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancelar") } }
         )
     }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Spacer(Modifier.height(10.dp)) }
-        item { ScreenHeader("Aplicaciones", "${apps.size} visibles", onSettings) }
-        item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Buscar app") }) }
-        item { FilterChip(onlyCandidates, { onlyCandidates = !onlyCandidates }, label = { Text("Solo candidatas") }) }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { Spacer(Modifier.height(12.dp)) }
+        item { ScreenHeader("Aplicaciones", "${apps.size} instaladas", onSettings) }
+        item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(16.dp), leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Buscar app") }) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(onlyCandidates, { onlyCandidates = !onlyCandidates }, label = { Text("Solo candidatas") })
+                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Actualizar") }
+            }
+        }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 item { FilterChip(sort == NextSort.INACTIVITY, { sort = NextSort.INACTIVITY }, label = { Text("Inactividad") }) }
@@ -238,21 +266,20 @@ private fun NextAppsScreen(
                 item { FilterChip(sort == NextSort.NAME, { sort = NextSort.NAME }, label = { Text("Nombre") }) }
             }
         }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Mostrando ${shown.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Actualizar") }
-            }
-        }
+        item { Text("${shown.size} resultados", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (loading) item { Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         items(shown, key = { it.packageName }) { app ->
-            Card(shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                     NextAppIcon(app.packageName)
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(app.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
                         Text(nextUsage(app), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(if (app.isSystemComponent) "Sistema · protegida" else if (app.recommendation == Recommendation.REMOVE) "Candidata a eliminar" else "Revisar / conservar", fontSize = 10.sp, color = if (app.recommendation == Recommendation.REMOVE) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary)
+                        Text(
+                            if (app.isSystemComponent) "Sistema · protegida" else if (app.recommendation == Recommendation.REMOVE) "Candidata a eliminar" else "Conservar / revisar",
+                            fontSize = 10.sp,
+                            color = if (app.recommendation == Recommendation.REMOVE) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                        )
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(nextBytes(app.sizeBytes ?: 0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
@@ -270,9 +297,21 @@ private fun NextCleanScreen(
     onOpenSettings: () -> Unit, photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: AdvancedPhotoAnalyzer
 ) {
     val candidates = apps.filter { it.recommendation == Recommendation.REMOVE }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Spacer(Modifier.height(10.dp)) }
-        item { ScreenHeader(if (focus == CleanFocus.OVERVIEW) "Limpieza guiada" else when (focus) { CleanFocus.PHOTOS -> "Fotos"; CleanFocus.VIDEOS -> "Videos"; CleanFocus.FILES -> "Archivos"; else -> "Limpieza" }, null, onOpenSettings, if (focus != CleanFocus.OVERVIEW) ({ onFocus(CleanFocus.OVERVIEW) }) else null) }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { Spacer(Modifier.height(12.dp)) }
+        item {
+            ScreenHeader(
+                if (focus == CleanFocus.OVERVIEW) "Limpieza" else when (focus) {
+                    CleanFocus.PHOTOS -> "Fotos"
+                    CleanFocus.VIDEOS -> "Videos"
+                    CleanFocus.FILES -> "Archivos"
+                    else -> "Limpieza"
+                },
+                if (focus == CleanFocus.OVERVIEW) "Revisa antes de eliminar" else null,
+                onOpenSettings,
+                if (focus != CleanFocus.OVERVIEW) ({ onFocus(CleanFocus.OVERVIEW) }) else null
+            )
+        }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 item { FilterChip(focus == CleanFocus.OVERVIEW, { onFocus(CleanFocus.OVERVIEW) }, label = { Text("Resumen") }) }
@@ -282,10 +321,10 @@ private fun NextCleanScreen(
             }
         }
         if (focus == CleanFocus.OVERVIEW) {
-            item { CleanJump("${candidates.size} apps candidatas", nextBytes(candidates.mapNotNull { it.sizeBytes }.sum()), onReviewApps) }
-            item { CleanJump("Fotos duplicadas y similares", "Hash + IA opcional") { onFocus(CleanFocus.PHOTOS) } }
-            item { CleanJump("Videos", "Grandes, antiguos y duplicados") { onFocus(CleanFocus.VIDEOS) } }
-            item { CleanJump("Archivos y descargas", "Tamaño, antigüedad y duplicados") { onFocus(CleanFocus.FILES) } }
+            item { CleanJump(Icons.Default.Apps, MaterialTheme.colorScheme.primary, "${candidates.size} apps candidatas", nextBytes(candidates.mapNotNull { it.sizeBytes }.sum()), onReviewApps) }
+            item { CleanJump(Icons.Default.PhotoLibrary, MaterialTheme.colorScheme.secondary, "Fotos", "Duplicados, similares y revisión manual") { onFocus(CleanFocus.PHOTOS) } }
+            item { CleanJump(Icons.Default.Movie, MaterialTheme.colorScheme.tertiary, "Videos", "Grandes, antiguos y duplicados exactos") { onFocus(CleanFocus.VIDEOS) } }
+            item { CleanJump(Icons.Default.Folder, MaterialTheme.colorScheme.primary, "Archivos y descargas", "Tamaño, antigüedad y duplicados exactos") { onFocus(CleanFocus.FILES) } }
         } else if (focus == CleanFocus.PHOTOS) {
             item { PhotoCleanerSectionV2(photoAnalyzer, advancedPhotoAnalyzer) }
         } else if (focus == CleanFocus.VIDEOS) {
@@ -298,13 +337,16 @@ private fun NextCleanScreen(
 }
 
 @Composable
-private fun CleanJump(title: String, subtitle: String, onClick: () -> Unit) {
-    Card(onClick = onClick, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.primary.copy(alpha=.09f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
+private fun CleanJump(icon: ImageVector, accent: Color, title: String, subtitle: String, onClick: () -> Unit) {
+    Card(onClick = onClick, shape = RoundedCornerShape(17.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(44.dp).background(accent.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = accent)
             }
-            Column(Modifier.padding(start = 12.dp)) { Text(title, fontWeight = FontWeight.SemiBold); Text(subtitle, color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp) }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+            }
         }
     }
 }
@@ -313,8 +355,8 @@ private fun CleanJump(title: String, subtitle: String, onClick: () -> Unit) {
 private fun NextAppIcon(packageName: String) {
     val context = LocalContext.current
     val image = remember(packageName) { runCatching { context.packageManager.getApplicationIcon(packageName).toBitmap(88, 88).asImageBitmap() }.getOrNull() }
-    if (image != null) Image(image, null, Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Fit)
-    else Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary.copy(.1f), RoundedCornerShape(10.dp)))
+    if (image != null) Image(image, null, Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)), contentScale = ContentScale.Fit)
+    else Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary.copy(.1f), RoundedCornerShape(11.dp)))
 }
 
 private fun nextUsage(app: AppCandidate): String = when {
