@@ -35,10 +35,12 @@ object PhotoScanSession {
     private var quickObserver: Job? = null
     private var advancedObserver: Job? = null
     private var attached = false
+    private var appContext: Context? = null
 
     fun attach(context: Context) {
-        if (attached && quickObserver?.isActive == true && advancedObserver?.isActive == true) return
         val app = context.applicationContext
+        appContext = app
+        if (attached && quickObserver?.isActive == true && advancedObserver?.isActive == true) return
         attached = true
         if (_state.value.quickResult == null) {
             val cached = PhotoScanCache.load(app)
@@ -150,6 +152,17 @@ object PhotoScanSession {
         _state.value = _state.value.copy(advancedScanning = true, done = 0, total = 0, message = "Preparando análisis avanzado…")
     }
 
+    // Compatibility overloads used by the already-tested V3 Compose screen.
+    fun startQuick(analyzer: PhotoAnalyzer) {
+        val context = appContext ?: return
+        startQuick(context)
+    }
+
+    fun startAdvanced(analyzer: AdvancedPhotoAnalyzer) {
+        val context = appContext ?: return
+        startAdvanced(context)
+    }
+
     fun invalidateResults(context: Context, message: String = "Contenido actualizado. Analiza de nuevo para verificar resultados.") {
         val app = context.applicationContext
         val manager = WorkManager.getInstance(app)
@@ -157,6 +170,11 @@ object PhotoScanSession {
         manager.cancelUniqueWork(PhotoAdvancedScanWorker.UNIQUE_NAME)
         PhotoScanCache.clear(app)
         _state.value = PhotoScanUiState(message = message)
+    }
+
+    fun invalidateResults(message: String = "Contenido actualizado. Analiza de nuevo para verificar resultados.") {
+        val context = appContext
+        if (context != null) invalidateResults(context, message) else _state.value = PhotoScanUiState(message = message)
     }
 
     fun setMessage(message: String) {
