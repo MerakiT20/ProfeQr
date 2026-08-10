@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +82,9 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
     var visibleHash by remember { mutableIntStateOf(20) }
     var visibleAi by remember { mutableIntStateOf(20) }
     var pendingDelete by remember { mutableStateOf<PendingPhotoDelete?>(null) }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var deleteQueue by remember { mutableStateOf<List<List<PhotoItem>>>(emptyList()) }
+    var deleteInFlight by remember { mutableStateOf(false) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -94,11 +98,26 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
         photoAccess = photoAnalyzer.hasPhotoAccess()
         PhotoScanSession.setMessage(if (photoAccess) "Acceso concedido." else "Android no concedió acceso a las fotos.")
     }
+
     val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            PhotoScanSession.invalidateResults("Eliminación completada. Analiza de nuevo para actualizar los grupos.")
-            visibleHash = 20
-            visibleAi = 20
+        val batch = deleteQueue.firstOrNull().orEmpty()
+        if (result.resultCode == Activity.RESULT_OK && batch.isNotEmpty()) {
+            val ids = batch.map { it.id }.toSet()
+            PhotoScanSession.removeDeleted(context, ids, "Lote eliminado. El análisis se conservó.")
+            selectedIds = selectedIds - ids
+            deleteQueue = deleteQueue.drop(1)
+        } else {
+            deleteQueue = emptyList()
+        }
+        deleteInFlight = false
+    }
+
+    LaunchedEffect(deleteQueue, deleteInFlight) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && deleteQueue.isNotEmpty() && !deleteInFlight) {
+            val batch = deleteQueue.first()
+            deleteInFlight = true
+            val request = MediaStore.createDeleteRequest(context.contentResolver, batch.map { it.uri })
+            deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
         }
     }
 
@@ -112,14 +131,21 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
     }
 
     fun deletePhotos(photos: List<PhotoItem>) {
-        if (photos.isEmpty()) return
+        val unique = photos.distinctBy { it.id }
+        if (unique.isEmpty()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val request = MediaStore.createDeleteRequest(context.contentResolver, photos.map { it.uri })
-            deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+            deleteQueue = unique.chunked(MAX_MEDIASTORE_DELETE_BATCH)
         } else {
             scope.launch(Dispatchers.IO) {
-                photos.forEach { runCatching { context.contentResolver.delete(it.uri, null, null) } }
-                withContext(Dispatchers.Main) { PhotoScanSession.invalidateResults("Eliminación completada.") }
+                val deleted = mutableSetOf<Long>()
+                unique.forEach { photo ->
+                    val ok = runCatching { context.contentResolver.delete(photo.uri, null, null) > 0 }.getOrDefault(false)
+                    if (ok) deleted += photo.id
+                }
+                withContext(Dispatchers.Main) {
+                    PhotoScanSession.removeDeleted(context, deleted, "Eliminación completada. El análisis se conservó.")
+                    selectedIds = selectedIds - deleted
+                }
             }
         }
     }
@@ -155,7 +181,7 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
             } else {
                 Button(
                     onClick = { visibleHash = 20; visibleAi = 20; PhotoScanSession.startQuick(photoAnalyzer) },
-                    enabled = !session.scanning && !session.advancedScanning,
+                    enabled = !session.scanning && !session.advancedScanning && !deleteInFlight,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     if (session.scanning) {
@@ -169,6 +195,9 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
             if (session.scanning || session.advancedScanning) {
                 Text("Puedes cambiar de pestaña o girar el teléfono; el análisis continuará.", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
             }
+            if (deleteQueue.isNotEmpty()) {
+                Text("Borrado masivo: ${deleteQueue.sumOf { it.size }} fotos pendientes en ${deleteQueue.size} lote(s).", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+            }
             session.message?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
             session.quickResult?.let { result ->
@@ -179,19 +208,58 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
                 }
                 V3Stat("Espacio recuperable", v3Bytes(result.recoverableBytes), Modifier.fillMaxWidth())
 
+                val exactCopies = result.exactGroups.flatMap { group ->
+                    val keep = v3BestPhoto(group.photos)
+                    group.photos.filter { it.id != keep.id }
+                }.distinctBy { it.id }
+
+                if (exactCopies.isNotEmpty()) {
+                    Button(
+                        onClick = {
+                            pendingDelete = PendingPhotoDelete(
+                                exactCopies,
+                                "¿Eliminar todas las copias duplicadas?",
+                                "Se conservará automáticamente 1 foto de cada grupo SHA-256 exacto y se eliminarán ${exactCopies.size} copias. El análisis permanecerá disponible."
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, null)
+                        Spacer(Modifier.size(6.dp))
+                        Text("Eliminar todas las copias exactas (${exactCopies.size})")
+                    }
+                }
+
+                if (selectedIds.isNotEmpty()) {
+                    val selectedPhotos = result.photos.filter { it.id in selectedIds }
+                    Button(
+                        onClick = {
+                            pendingDelete = PendingPhotoDelete(
+                                selectedPhotos,
+                                "¿Eliminar ${selectedPhotos.size} fotos seleccionadas?",
+                                "Esta selección puede incluir fotos casi idénticas o similares por IA. Revisa tu selección antes de continuar."
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Eliminar seleccionadas (${selectedPhotos.size}) · ${v3Bytes(selectedPhotos.sumOf { it.sizeBytes })}") }
+                    TextButton(onClick = { selectedIds = emptySet() }) { Text("Cancelar selección") }
+                }
+
                 if (result.quickGroups.isNotEmpty()) {
                     Text("Resultados por hash", fontWeight = FontWeight.Bold)
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         result.quickGroups.take(visibleHash).forEach { group ->
-                            V3PhotoGroup(group, photoAnalyzer) { photos, automatic ->
-                                pendingDelete = pendingFor(group, photos, automatic)
-                            }
+                            V3PhotoGroup(
+                                group = group,
+                                analyzer = photoAnalyzer,
+                                globalSelected = selectedIds,
+                                onToggle = { id -> selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id },
+                                onDelete = { photos, automatic -> pendingDelete = pendingFor(group, photos, automatic) }
+                            )
                         }
                     }
                     if (visibleHash < result.quickGroups.size) {
-                        OutlinedButton(onClick = { visibleHash += 20 }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Mostrar 20 grupos más")
-                        }
+                        OutlinedButton(onClick = { visibleHash += 20 }, modifier = Modifier.fillMaxWidth()) { Text("Mostrar 20 grupos más") }
                     }
                 }
 
@@ -204,7 +272,7 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
                         Text("Encuentra similitudes visuales. Requiere más tiempo, memoria y batería.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(
                             onClick = { visibleAi = 20; PhotoScanSession.startAdvanced(advancedPhotoAnalyzer) },
-                            enabled = !session.scanning && !session.advancedScanning,
+                            enabled = !session.scanning && !session.advancedScanning && !deleteInFlight,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (session.advancedScanning) {
@@ -220,9 +288,13 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
                     Text("Similares encontradas por IA", fontWeight = FontWeight.Bold)
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         session.aiGroups.take(visibleAi).forEach { group ->
-                            V3PhotoGroup(group, photoAnalyzer) { photos, automatic ->
-                                pendingDelete = pendingFor(group, photos, automatic)
-                            }
+                            V3PhotoGroup(
+                                group = group,
+                                analyzer = photoAnalyzer,
+                                globalSelected = selectedIds,
+                                onToggle = { id -> selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id },
+                                onDelete = { photos, automatic -> pendingDelete = pendingFor(group, photos, automatic) }
+                            )
                         }
                     }
                     if (visibleAi < session.aiGroups.size) {
@@ -239,17 +311,22 @@ private data class PendingPhotoDelete(val photos: List<PhotoItem>, val title: St
 private fun pendingFor(group: PhotoGroup, photos: List<PhotoItem>, automatic: Boolean): PendingPhotoDelete {
     val title = if (automatic) "¿Conservar una y eliminar el resto?" else "¿Eliminar selección?"
     val message = when (group.kind) {
-        PhotoGroupKind.EXACT -> "Estas fotos tienen contenido SHA-256 idéntico. LIA conservará una copia y Android mostrará la confirmación final."
+        PhotoGroupKind.EXACT -> "Estas fotos tienen SHA-256 idéntico. Se conservará una copia y el análisis actual permanecerá disponible."
         PhotoGroupKind.NEAR_DUPLICATE -> "Estas fotos son casi idénticas, pero no son el mismo archivo. Revisa la miniatura marcada CONSERVAR antes de continuar."
-        PhotoGroupKind.AI_SIMILAR -> "La IA considera estas fotos visualmente similares. No es una garantía de duplicado. Revisa cuál se conservará antes de borrar."
+        PhotoGroupKind.AI_SIMILAR -> "La IA considera estas fotos visualmente similares. No es garantía de duplicado. Revisa cuál se conservará antes de borrar."
     }
     return PendingPhotoDelete(photos, title, message)
 }
 
 @Composable
-private fun V3PhotoGroup(group: PhotoGroup, analyzer: PhotoAnalyzer, onDelete: (List<PhotoItem>, Boolean) -> Unit) {
-    val keep = remember(group.id) { v3BestPhoto(group.photos) }
-    var selected by remember(group.id) { mutableStateOf(group.photos.filter { it.id != keep.id }.map { it.id }.toSet()) }
+private fun V3PhotoGroup(
+    group: PhotoGroup,
+    analyzer: PhotoAnalyzer,
+    globalSelected: Set<Long>,
+    onToggle: (Long) -> Unit,
+    onDelete: (List<PhotoItem>, Boolean) -> Unit
+) {
+    val keep = remember(group.id, group.photos.size) { v3BestPhoto(group.photos) }
     val title = when (group.kind) {
         PhotoGroupKind.EXACT -> "Duplicado exacto"
         PhotoGroupKind.NEAR_DUPLICATE -> "Casi idénticas"
@@ -267,25 +344,22 @@ private fun V3PhotoGroup(group: PhotoGroup, analyzer: PhotoAnalyzer, onDelete: (
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 items(group.photos, key = { it.id }) { photo ->
-                    V3Thumb(photo, analyzer, selected = photo.id in selected, keep = photo.id == keep.id) {
-                        if (photo.id != keep.id) selected = if (photo.id in selected) selected - photo.id else selected + photo.id
-                    }
+                    V3Thumb(photo, analyzer, selected = photo.id in globalSelected, keep = photo.id == keep.id) { onToggle(photo.id) }
                 }
             }
             Button(
                 onClick = { onDelete(group.photos.filter { it.id != keep.id }, true) },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Conservar 1 y eliminar el resto (${group.photos.size - 1})")
-            }
+            ) { Text("Conservar 1 y eliminar el resto (${group.photos.size - 1})") }
+            val selectedInGroup = group.photos.filter { it.id in globalSelected }
             OutlinedButton(
-                onClick = { onDelete(group.photos.filter { it.id in selected }, false) },
-                enabled = selected.isNotEmpty(),
+                onClick = { onDelete(selectedInGroup, false) },
+                enabled = selectedInGroup.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Default.DeleteOutline, null)
                 Spacer(Modifier.size(6.dp))
-                Text("Selección manual (${selected.size})")
+                Text("Eliminar selección de este grupo (${selectedInGroup.size})")
             }
         }
     }
@@ -325,3 +399,5 @@ private fun v3Bytes(bytes: Long): String {
     if (mb < 1024) return String.format("%.1f MB", mb)
     return String.format("%.2f GB", mb / 1024.0)
 }
+
+private const val MAX_MEDIASTORE_DELETE_BATCH = 2000
