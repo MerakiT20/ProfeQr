@@ -31,11 +31,14 @@ class AdvancedPhotoAnalyzer(
             .build()
         val options = ImageEmbedder.ImageEmbedderOptions.builder()
             .setBaseOptions(baseOptions)
-            .setQuantize(false)
+            .setQuantize(true)
             .build()
         val embedder = ImageEmbedder.createFromOptions(context, options)
 
         try {
+            // Quantized embeddings use one byte per dimension instead of a float,
+            // cutting the dominant vector-memory cost while preserving cosine
+            // comparison through MediaPipe's own utility.
             val embeddings = LinkedHashMap<Long, Embedding>(candidates.size)
             candidates.forEachIndexed { index, photo ->
                 val bitmap = photoAnalyzer.loadPreview(photo.uri, 256)
@@ -71,13 +74,15 @@ class AdvancedPhotoAnalyzer(
         val pairs = linkedSetOf<IdPair>()
 
         embeddings.forEach { (id, embedding) ->
-            val vector = embedding.floatEmbedding()
+            val vector = embedding.quantizedEmbedding()
             if (vector.isNotEmpty()) {
                 for (band in 0 until 4) {
                     var signature = 0
                     for (bit in 0 until 12) {
                         val index = ((band * 97) + (bit * 53)) % vector.size
-                        if (vector[index] >= 0f) signature = signature or (1 shl bit)
+                        // Scalar-quantized values are represented in Java bytes;
+                        // compare their unsigned value around the midpoint.
+                        if ((vector[index].toInt() and 0xFF) >= 128) signature = signature or (1 shl bit)
                     }
                     buckets.getOrPut("$band-$signature") { mutableListOf() }.add(id)
                 }
@@ -87,9 +92,7 @@ class AdvancedPhotoAnalyzer(
         buckets.values.forEach { ids ->
             if (ids.size in 2..100) {
                 for (i in 0 until ids.lastIndex) {
-                    for (j in i + 1 until ids.size) {
-                        pairs += IdPair.of(ids[i], ids[j])
-                    }
+                    for (j in i + 1 until ids.size) pairs += IdPair.of(ids[i], ids[j])
                 }
             }
         }
@@ -128,13 +131,9 @@ class AdvancedPhotoAnalyzer(
                 if (ids.size < 2) return@mapNotNull null
                 val groupPhotos = ids.mapNotNull(byId::get)
                 if (groupPhotos.size < 2) return@mapNotNull null
-
                 val groupIdSet = groupPhotos.mapTo(mutableSetOf()) { it.id }
-                val scores = acceptedScores
-                    .filterKeys { it.a in groupIdSet && it.b in groupIdSet }
-                    .values
+                val scores = acceptedScores.filterKeys { it.a in groupIdSet && it.b in groupIdSet }.values
                 val representativeSimilarity = scores.average().takeIf { !it.isNaN() }
-
                 PhotoGroup(
                     id = "ai-${groupPhotos.minOf { it.id }}",
                     kind = PhotoGroupKind.AI_SIMILAR,
@@ -145,17 +144,12 @@ class AdvancedPhotoAnalyzer(
             .sortedByDescending { it.recoverableBytes }
     }
 
-    private fun acceptSimilarity(
-        first: PhotoItem,
-        second: PhotoItem,
-        similarity: Double
-    ): Boolean {
+    private fun acceptSimilarity(first: PhotoItem, second: PhotoItem, similarity: Double): Boolean {
         val ratio1 = if (first.height > 0) first.width.toDouble() / first.height else 0.0
         val ratio2 = if (second.height > 0) second.width.toDouble() / second.height else 0.0
         val aspectClose = ratio1 == 0.0 || ratio2 == 0.0 || abs(ratio1 - ratio2) <= 0.25
         val timeClose = first.dateTakenMs > 0L && second.dateTakenMs > 0L &&
             abs(first.dateTakenMs - second.dateTakenMs) <= 24L * 60L * 60L * 1000L
-
         return similarity >= 0.985 ||
             (similarity >= 0.970 && aspectClose) ||
             (similarity >= 0.960 && aspectClose && timeClose)
@@ -163,14 +157,12 @@ class AdvancedPhotoAnalyzer(
 
     private data class IdPair(val a: Long, val b: Long) {
         companion object {
-            fun of(first: Long, second: Long): IdPair =
-                if (first <= second) IdPair(first, second) else IdPair(second, first)
+            fun of(first: Long, second: Long): IdPair = if (first <= second) IdPair(first, second) else IdPair(second, first)
         }
     }
 
     private class UnionFind(ids: List<Long>) {
         private val parent = ids.associateWith { it }.toMutableMap()
-
         private fun find(id: Long): Long {
             val p = parent[id] ?: id
             if (p == id) return id
@@ -178,17 +170,12 @@ class AdvancedPhotoAnalyzer(
             parent[id] = root
             return root
         }
-
         fun union(a: Long, b: Long) {
             val rootA = find(a)
             val rootB = find(b)
             if (rootA != rootB) parent[rootB] = rootA
         }
-
-        fun groups(): List<List<Long>> = parent.keys
-            .groupBy { find(it) }
-            .values
-            .map { it.toList() }
+        fun groups(): List<List<Long>> = parent.keys.groupBy { find(it) }.values.map { it.toList() }
     }
 
     companion object {
