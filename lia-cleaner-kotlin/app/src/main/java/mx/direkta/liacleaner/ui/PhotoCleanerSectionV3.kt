@@ -17,24 +17,32 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,8 +64,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -79,12 +90,12 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
     val scope = rememberCoroutineScope()
     val session by PhotoScanSession.state.collectAsStateWithLifecycle()
     var photoAccess by remember { mutableStateOf(photoAnalyzer.hasPhotoAccess()) }
-    var visibleHash by remember { mutableIntStateOf(20) }
-    var visibleAi by remember { mutableIntStateOf(20) }
+    var visibleHash by remember { mutableIntStateOf(12) }
+    var visibleAi by remember { mutableIntStateOf(12) }
     var pendingDelete by remember { mutableStateOf<PendingPhotoDelete?>(null) }
-    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var manualOpen by remember { mutableStateOf(false) }
     var deleteQueue by remember { mutableStateOf<List<List<PhotoItem>>>(emptyList()) }
-    var deleteInFlight by remember { mutableStateOf(false) }
+    var activeBatch by remember { mutableStateOf<List<PhotoItem>>(emptyList()) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -100,23 +111,22 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
     }
 
     val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        val batch = deleteQueue.firstOrNull().orEmpty()
-        if (result.resultCode == Activity.RESULT_OK && batch.isNotEmpty()) {
-            val ids = batch.map { it.id }.toSet()
-            PhotoScanSession.removeDeleted(context, ids, "Lote eliminado. El análisis se conservó.")
-            selectedIds = selectedIds - ids
-            deleteQueue = deleteQueue.drop(1)
+        val deleted = activeBatch
+        if (result.resultCode == Activity.RESULT_OK && deleted.isNotEmpty()) {
+            PhotoScanSession.removeDeleted(context, deleted.map { it.id }.toSet(), "Eliminación completada sin perder el análisis.")
+            activeBatch = emptyList()
         } else {
+            activeBatch = emptyList()
             deleteQueue = emptyList()
         }
-        deleteInFlight = false
     }
 
-    LaunchedEffect(deleteQueue, deleteInFlight) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && deleteQueue.isNotEmpty() && !deleteInFlight) {
-            val batch = deleteQueue.first()
-            deleteInFlight = true
-            val request = MediaStore.createDeleteRequest(context.contentResolver, batch.map { it.uri })
+    LaunchedEffect(deleteQueue, activeBatch) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && activeBatch.isEmpty() && deleteQueue.isNotEmpty()) {
+            val next = deleteQueue.first()
+            deleteQueue = deleteQueue.drop(1)
+            activeBatch = next
+            val request = MediaStore.createDeleteRequest(context.contentResolver, next.map { it.uri })
             deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
         }
     }
@@ -134,17 +144,12 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
         val unique = photos.distinctBy { it.id }
         if (unique.isEmpty()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            deleteQueue = unique.chunked(MAX_MEDIASTORE_DELETE_BATCH)
+            deleteQueue = unique.chunked(2000)
         } else {
             scope.launch(Dispatchers.IO) {
-                val deleted = mutableSetOf<Long>()
-                unique.forEach { photo ->
-                    val ok = runCatching { context.contentResolver.delete(photo.uri, null, null) > 0 }.getOrDefault(false)
-                    if (ok) deleted += photo.id
-                }
+                val deleted = unique.filter { runCatching { context.contentResolver.delete(it.uri, null, null) > 0 }.getOrDefault(false) }
                 withContext(Dispatchers.Main) {
-                    PhotoScanSession.removeDeleted(context, deleted, "Eliminación completada. El análisis se conservó.")
-                    selectedIds = selectedIds - deleted
+                    PhotoScanSession.removeDeleted(context, deleted.map { it.id }.toSet(), "Eliminación completada sin perder el análisis.")
                 }
             }
         }
@@ -160,147 +165,153 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
                     val photos = pending.photos
                     pendingDelete = null
                     deletePhotos(photos)
-                }) { Text("Continuar") }
+                }) { Text("Eliminar") }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") } }
         )
     }
 
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Image, null, tint = MaterialTheme.colorScheme.primary)
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text("Fotos", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("Hash primero; IA avanzada cuando tú la solicitas.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val allManualGroups = remember(session.quickResult, session.aiGroups) {
+        buildList {
+            session.quickResult?.let { addAll(it.exactGroups); addAll(it.nearGroups) }
+            addAll(session.aiGroups)
+        }.distinctBy { it.id }
+    }
+
+    if (manualOpen && allManualGroups.isNotEmpty()) {
+        PhotoManualSession(
+            groups = allManualGroups,
+            analyzer = photoAnalyzer,
+            onClose = { manualOpen = false },
+            onDelete = { photos ->
+                manualOpen = false
+                pendingDelete = PendingPhotoDelete(
+                    photos,
+                    "¿Eliminar ${photos.size} fotos seleccionadas?",
+                    "Revisaste cada grupo y elegiste qué fotografía conservar. Android mostrará la confirmación final."
+                )
+            }
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = .10f), RoundedCornerShape(13.dp)),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Default.PhotoLibrary, null, tint = MaterialTheme.colorScheme.primary) }
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("Fotos", fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                        Text("Duplicados exactos, casi idénticos y similitud con IA.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            }
 
-            if (!photoAccess) {
-                Button(onClick = ::requestAccess, modifier = Modifier.fillMaxWidth()) { Text("Dar acceso a fotos") }
-            } else {
-                Button(
-                    onClick = { visibleHash = 20; visibleAi = 20; PhotoScanSession.startQuick(photoAnalyzer) },
-                    enabled = !session.scanning && !session.advancedScanning && !deleteInFlight,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (session.scanning) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.size(8.dp))
-                        Text(if (session.total > 0) "${session.done} / ${session.total}" else "Preparando…")
-                    } else Text(if (session.quickResult == null) "Analizar fotos" else "Analizar de nuevo")
-                }
-            }
-
-            if (session.scanning || session.advancedScanning) {
-                Text("Puedes cambiar de pestaña o girar el teléfono; el análisis continuará.", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-            }
-            if (deleteQueue.isNotEmpty()) {
-                Text("Borrado masivo: ${deleteQueue.sumOf { it.size }} fotos pendientes en ${deleteQueue.size} lote(s).", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-            }
-            session.message?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-
-            session.quickResult?.let { result ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    V3Stat("Fotos", result.photos.size.toString(), Modifier.weight(1f))
-                    V3Stat("Exactas", result.exactGroups.size.toString(), Modifier.weight(1f))
-                    V3Stat("Casi iguales", result.nearGroups.size.toString(), Modifier.weight(1f))
-                }
-                V3Stat("Espacio recuperable", v3Bytes(result.recoverableBytes), Modifier.fillMaxWidth())
-
-                val exactCopies = result.exactGroups.flatMap { group ->
-                    val keep = v3BestPhoto(group.photos)
-                    group.photos.filter { it.id != keep.id }
-                }.distinctBy { it.id }
-
-                if (exactCopies.isNotEmpty()) {
+                if (!photoAccess) {
+                    Button(onClick = ::requestAccess, modifier = Modifier.fillMaxWidth()) { Text("Dar acceso a fotos") }
+                } else {
                     Button(
-                        onClick = {
-                            pendingDelete = PendingPhotoDelete(
-                                exactCopies,
-                                "¿Eliminar todas las copias duplicadas?",
-                                "Se conservará automáticamente 1 foto de cada grupo SHA-256 exacto y se eliminarán ${exactCopies.size} copias. El análisis permanecerá disponible."
-                            )
-                        },
+                        onClick = { visibleHash = 12; visibleAi = 12; PhotoScanSession.startQuick(photoAnalyzer) },
+                        enabled = !session.scanning && !session.advancedScanning,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.DeleteOutline, null)
-                        Spacer(Modifier.size(6.dp))
-                        Text("Eliminar todas las copias exactas (${exactCopies.size})")
+                        if (session.scanning) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.size(8.dp))
+                            Text(if (session.total > 0) "Analizando ${session.done} / ${session.total}" else "Preparando…")
+                        } else Text(if (session.quickResult == null) "Analizar fotos" else "Actualizar análisis")
                     }
                 }
 
-                if (selectedIds.isNotEmpty()) {
-                    val selectedPhotos = result.photos.filter { it.id in selectedIds }
-                    Button(
-                        onClick = {
-                            pendingDelete = PendingPhotoDelete(
-                                selectedPhotos,
-                                "¿Eliminar ${selectedPhotos.size} fotos seleccionadas?",
-                                "Esta selección puede incluir fotos casi idénticas o similares por IA. Revisa tu selección antes de continuar."
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Eliminar seleccionadas (${selectedPhotos.size}) · ${v3Bytes(selectedPhotos.sumOf { it.sizeBytes })}") }
-                    TextButton(onClick = { selectedIds = emptySet() }) { Text("Cancelar selección") }
+                if (session.scanning || session.advancedScanning) {
+                    if (session.total > 0) LinearProgressIndicator(progress = { (session.done.toFloat() / session.total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                    Text("Puedes cambiar de pestaña; el análisis continúa.", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
                 }
+                session.message?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+        }
 
-                if (result.quickGroups.isNotEmpty()) {
-                    Text("Resultados por hash", fontWeight = FontWeight.Bold)
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        result.quickGroups.take(visibleHash).forEach { group ->
-                            V3PhotoGroup(
-                                group = group,
-                                analyzer = photoAnalyzer,
-                                globalSelected = selectedIds,
-                                onToggle = { id -> selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id },
-                                onDelete = { photos, automatic -> pendingDelete = pendingFor(group, photos, automatic) }
-                            )
-                        }
-                    }
-                    if (visibleHash < result.quickGroups.size) {
-                        OutlinedButton(onClick = { visibleHash += 20 }, modifier = Modifier.fillMaxWidth()) { Text("Mostrar 20 grupos más") }
-                    }
-                }
+        session.quickResult?.let { result ->
+            val exactCopies = result.exactGroups.flatMap { group ->
+                val keep = bestPhoto(group.photos)
+                group.photos.filter { it.id != keep.id }
+            }.distinctBy { it.id }
 
-                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = .06f))) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
-                            Text("Análisis avanzado con IA", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
-                        }
-                        Text("Encuentra similitudes visuales. Requiere más tiempo, memoria y batería.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedButton(
-                            onClick = { visibleAi = 20; PhotoScanSession.startAdvanced(advancedPhotoAnalyzer) },
-                            enabled = !session.scanning && !session.advancedScanning && !deleteInFlight,
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ModernPhotoStat("Fotos", result.photos.size.toString(), Modifier.weight(1f))
+                ModernPhotoStat("Exactas", result.exactGroups.size.toString(), Modifier.weight(1f))
+                ModernPhotoStat("Casi iguales", result.nearGroups.size.toString(), Modifier.weight(1f))
+            }
+
+            if (result.exactGroups.isNotEmpty()) {
+                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = .08f))) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Limpieza rápida", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("${result.exactGroups.size} grupos exactos · ${v3Bytes(result.exactGroups.sumOf { it.recoverableBytes })} recuperables", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(
+                            onClick = {
+                                pendingDelete = PendingPhotoDelete(
+                                    exactCopies,
+                                    "¿Eliminar todas las copias exactas?",
+                                    "LIA conservará automáticamente una fotografía por cada grupo exacto y eliminará ${exactCopies.size} copias."
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (session.advancedScanning) {
-                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(Modifier.size(8.dp))
-                                Text(if (session.total > 0) "${session.done} / ${session.total}" else "Analizando…")
-                            } else Text(if (session.aiGroups.isEmpty()) "Iniciar análisis avanzado" else "Repetir análisis avanzado")
+                            Icon(Icons.Default.DeleteSweep, null)
+                            Spacer(Modifier.size(7.dp))
+                            Text("Eliminar todas las copias exactas (${exactCopies.size})")
                         }
                     }
                 }
+            }
 
-                if (session.aiGroups.isNotEmpty()) {
-                    Text("Similares encontradas por IA", fontWeight = FontWeight.Bold)
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        session.aiGroups.take(visibleAi).forEach { group ->
-                            V3PhotoGroup(
-                                group = group,
-                                analyzer = photoAnalyzer,
-                                globalSelected = selectedIds,
-                                onToggle = { id -> selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id },
-                                onDelete = { photos, automatic -> pendingDelete = pendingFor(group, photos, automatic) }
-                            )
-                        }
-                    }
-                    if (visibleAi < session.aiGroups.size) {
-                        OutlinedButton(onClick = { visibleAi += 20 }, modifier = Modifier.fillMaxWidth()) { Text("Mostrar 20 grupos más") }
+            if (allManualGroups.isNotEmpty()) {
+                OutlinedButton(onClick = { manualOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.PhotoLibrary, null)
+                    Spacer(Modifier.size(7.dp))
+                    Text("Revisión manual grupo por grupo (${allManualGroups.size})")
+                }
+            }
+
+            if (result.quickGroups.isNotEmpty()) {
+                Text("Resultados", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    result.quickGroups.take(visibleHash).forEach { group ->
+                        CompactPhotoGroup(group, photoAnalyzer) { manualOpen = true }
                     }
                 }
+                if (visibleHash < result.quickGroups.size) {
+                    OutlinedButton(onClick = { visibleHash += 12 }, modifier = Modifier.fillMaxWidth()) { Text("Mostrar 12 grupos más") }
+                }
+            }
+
+            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = .07f))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.tertiary)
+                        Text("Análisis avanzado con IA", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
+                    }
+                    Text("Busca fotografías visualmente similares. Requiere más tiempo, memoria y batería.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(
+                        onClick = { visibleAi = 12; PhotoScanSession.startAdvanced(advancedPhotoAnalyzer) },
+                        enabled = !session.scanning && !session.advancedScanning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (session.advancedScanning) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.size(8.dp))
+                            Text(if (session.total > 0) "${session.done} / ${session.total}" else "Analizando…")
+                        } else Text(if (session.aiGroups.isEmpty()) "Iniciar análisis avanzado" else "Actualizar análisis avanzado")
+                    }
+                }
+            }
+
+            if (session.aiGroups.isNotEmpty()) {
+                Text("Similares con IA", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                session.aiGroups.take(visibleAi).forEach { group -> CompactPhotoGroup(group, photoAnalyzer) { manualOpen = true } }
+                if (visibleAi < session.aiGroups.size) OutlinedButton(onClick = { visibleAi += 12 }, modifier = Modifier.fillMaxWidth()) { Text("Mostrar 12 grupos más") }
             }
         }
     }
@@ -308,88 +319,149 @@ fun PhotoCleanerSectionV3(photoAnalyzer: PhotoAnalyzer, advancedPhotoAnalyzer: A
 
 private data class PendingPhotoDelete(val photos: List<PhotoItem>, val title: String, val message: String)
 
-private fun pendingFor(group: PhotoGroup, photos: List<PhotoItem>, automatic: Boolean): PendingPhotoDelete {
-    val title = if (automatic) "¿Conservar una y eliminar el resto?" else "¿Eliminar selección?"
-    val message = when (group.kind) {
-        PhotoGroupKind.EXACT -> "Estas fotos tienen SHA-256 idéntico. Se conservará una copia y el análisis actual permanecerá disponible."
-        PhotoGroupKind.NEAR_DUPLICATE -> "Estas fotos son casi idénticas, pero no son el mismo archivo. Revisa la miniatura marcada CONSERVAR antes de continuar."
-        PhotoGroupKind.AI_SIMILAR -> "La IA considera estas fotos visualmente similares. No es garantía de duplicado. Revisa cuál se conservará antes de borrar."
+@Composable
+private fun PhotoManualSession(
+    groups: List<PhotoGroup>,
+    analyzer: PhotoAnalyzer,
+    onClose: () -> Unit,
+    onDelete: (List<PhotoItem>) -> Unit
+) {
+    var index by remember(groups) { mutableIntStateOf(0) }
+    var keepByGroup by remember(groups) {
+        mutableStateOf(groups.associate { it.id to bestPhoto(it.photos).id })
     }
-    return PendingPhotoDelete(photos, title, message)
+    val group = groups[index]
+    val keepId = keepByGroup[group.id] ?: bestPhoto(group.photos).id
+    val allKeepIds = keepByGroup.values.toSet()
+    val deleteSelection = groups.flatMap { g -> g.photos.filter { it.id != keepByGroup[g.id] } }.filterNot { it.id in allKeepIds }.distinctBy { it.id }
+
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, "Cerrar") }
+                    Column(Modifier.weight(1f)) {
+                        Text("Revisión manual", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("Grupo ${index + 1} de ${groups.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("${((index + 1) * 100 / groups.size)}%", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                }
+                LinearProgressIndicator(progress = { (index + 1).toFloat() / groups.size.toFloat() }, modifier = Modifier.fillMaxWidth())
+
+                Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(manualGroupTitle(group), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("Toca la foto que quieres conservar. Las demás quedarán marcadas para eliminar.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(group.photos, key = { it.id }) { photo ->
+                                ManualPhotoThumb(photo, analyzer, keep = photo.id == keepId) {
+                                    keepByGroup = keepByGroup + (group.id to photo.id)
+                                }
+                            }
+                        }
+                        Text("Se eliminarán ${group.photos.count { it.id != keepId }} de este grupo.", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { if (index > 0) index-- }, enabled = index > 0, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.size(4.dp)); Text("Anterior")
+                    }
+                    Button(onClick = { if (index < groups.lastIndex) index++ }, enabled = index < groups.lastIndex, modifier = Modifier.weight(1f)) {
+                        Text("Siguiente"); Spacer(Modifier.size(4.dp)); Icon(Icons.Default.ArrowForward, null)
+                    }
+                }
+
+                Spacer(Modifier.weight(1f))
+                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = .08f))) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Resumen de la sesión", fontWeight = FontWeight.Bold)
+                        Text("${groups.size} grupos · ${deleteSelection.size} fotos marcadas para eliminar", fontSize = 12.sp)
+                        Button(onClick = { onDelete(deleteSelection) }, enabled = deleteSelection.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.DeleteSweep, null); Spacer(Modifier.size(7.dp)); Text("Eliminar seleccionadas (${deleteSelection.size})")
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-private fun V3PhotoGroup(
-    group: PhotoGroup,
-    analyzer: PhotoAnalyzer,
-    globalSelected: Set<Long>,
-    onToggle: (Long) -> Unit,
-    onDelete: (List<PhotoItem>, Boolean) -> Unit
-) {
-    val keep = remember(group.id, group.photos.size) { v3BestPhoto(group.photos) }
-    val title = when (group.kind) {
-        PhotoGroupKind.EXACT -> "Duplicado exacto"
-        PhotoGroupKind.NEAR_DUPLICATE -> "Casi idénticas"
-        PhotoGroupKind.AI_SIMILAR -> "Similares con IA"
+private fun ManualPhotoThumb(photo: PhotoItem, analyzer: PhotoAnalyzer, keep: Boolean, onKeep: () -> Unit) {
+    val image by produceState<ImageBitmap?>(null, photo.id) {
+        value = withContext(Dispatchers.IO) { analyzer.loadPreview(photo.uri, 360)?.asImageBitmap() }
     }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(
+            Modifier.size(160.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onKeep)
+        ) {
+            if (image != null) Image(image!!, photo.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else Icon(Icons.Default.Image, null, Modifier.align(Alignment.Center))
+            if (keep) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.secondary.copy(alpha = .10f)))
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp).background(MaterialTheme.colorScheme.secondary, CircleShape).padding(5.dp)) {
+                    Icon(Icons.Default.CheckCircle, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
+            Text(v3Bytes(photo.sizeBytes), fontSize = 9.sp, color = Color.White, modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = .55f)).padding(horizontal = 6.dp, vertical = 3.dp))
+        }
+        Text(if (keep) "CONSERVAR" else "Eliminar", color = if (keep) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = if (keep) FontWeight.Bold else FontWeight.Normal)
+    }
+}
 
-    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .3f))) {
-        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+@Composable
+private fun CompactPhotoGroup(group: PhotoGroup, analyzer: PhotoAnalyzer, onReview: () -> Unit) {
+    val keep = remember(group.id) { bestPhoto(group.photos) }
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
-                    Text("$title · ${group.photos.size} fotos", fontWeight = FontWeight.SemiBold)
+                    Text("${manualGroupTitle(group)} · ${group.photos.size} fotos", fontWeight = FontWeight.SemiBold)
                     Text("Hasta ${v3Bytes(group.recoverableBytes)} recuperables", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
                 }
                 group.similarity?.let { Text("${(it * 100).toInt()}%", fontWeight = FontWeight.Bold) }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(group.photos, key = { it.id }) { photo ->
-                    V3Thumb(photo, analyzer, selected = photo.id in globalSelected, keep = photo.id == keep.id) { onToggle(photo.id) }
-                }
+                items(group.photos.take(4), key = { it.id }) { photo -> CompactPhotoThumb(photo, analyzer, keep = photo.id == keep.id) }
             }
-            Button(
-                onClick = { onDelete(group.photos.filter { it.id != keep.id }, true) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Conservar 1 y eliminar el resto (${group.photos.size - 1})") }
-            val selectedInGroup = group.photos.filter { it.id in globalSelected }
-            OutlinedButton(
-                onClick = { onDelete(selectedInGroup, false) },
-                enabled = selectedInGroup.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.DeleteOutline, null)
-                Spacer(Modifier.size(6.dp))
-                Text("Eliminar selección de este grupo (${selectedInGroup.size})")
-            }
+            TextButton(onClick = onReview, modifier = Modifier.align(Alignment.End)) { Text("Revisar en sesión manual") }
         }
     }
 }
 
 @Composable
-private fun V3Thumb(photo: PhotoItem, analyzer: PhotoAnalyzer, selected: Boolean, keep: Boolean, onToggle: () -> Unit) {
+private fun CompactPhotoThumb(photo: PhotoItem, analyzer: PhotoAnalyzer, keep: Boolean) {
     val image by produceState<ImageBitmap?>(null, photo.id) {
         value = withContext(Dispatchers.IO) { analyzer.loadPreview(photo.uri, 160)?.asImageBitmap() }
     }
-    Box(Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface).clickable(onClick = onToggle)) {
+    Box(Modifier.size(76.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
         if (image != null) Image(image!!, photo.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Icon(Icons.Default.Image, null, Modifier.align(Alignment.Center))
-        if (selected) {
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = .18f)))
-            Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
-        }
-        if (keep) Text("CONSERVAR", fontSize = 8.sp, color = Color.White, modifier = Modifier.align(Alignment.TopStart).background(MaterialTheme.colorScheme.secondary).padding(4.dp))
-        Text(v3Bytes(photo.sizeBytes), fontSize = 8.sp, color = Color.White, modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = .55f)).padding(3.dp))
+        if (keep) Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(18.dp))
     }
 }
 
 @Composable
-private fun V3Stat(title: String, value: String, modifier: Modifier) {
-    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f), RoundedCornerShape(14.dp)).padding(10.dp)) {
-        Column { Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold); Text(title, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+private fun ModernPhotoStat(title: String, value: String, modifier: Modifier) {
+    Card(modifier, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(11.dp)) {
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
-private fun v3BestPhoto(photos: List<PhotoItem>): PhotoItem = photos.maxWithOrNull(compareBy<PhotoItem> { it.width.toLong() * it.height.toLong() }.thenBy { it.sizeBytes }.thenBy { it.dateModifiedMs }) ?: photos.first()
+private fun manualGroupTitle(group: PhotoGroup) = when (group.kind) {
+    PhotoGroupKind.EXACT -> "Duplicadas exactas"
+    PhotoGroupKind.NEAR_DUPLICATE -> "Casi idénticas"
+    PhotoGroupKind.AI_SIMILAR -> "Similares con IA"
+}
+
+private fun bestPhoto(photos: List<PhotoItem>): PhotoItem = photos.maxWithOrNull(
+    compareBy<PhotoItem> { it.width.toLong() * it.height.toLong() }
+        .thenBy { it.sizeBytes }
+        .thenBy { it.dateModifiedMs }
+) ?: photos.first()
 
 private fun v3Bytes(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"
@@ -399,5 +471,3 @@ private fun v3Bytes(bytes: Long): String {
     if (mb < 1024) return String.format("%.1f MB", mb)
     return String.format("%.2f GB", mb / 1024.0)
 }
-
-private const val MAX_MEDIASTORE_DELETE_BATCH = 2000
