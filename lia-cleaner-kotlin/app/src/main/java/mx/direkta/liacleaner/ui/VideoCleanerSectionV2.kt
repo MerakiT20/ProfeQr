@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -57,8 +58,9 @@ import java.util.Locale
 @Composable
 fun VideoCleanerSectionV2() {
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val lifecycleOwner = LocalLifecycleOwner.current
-    val analyzer = remember { FileCleanerAnalyzer(context.applicationContext) }
+    val analyzer = remember { FileCleanerAnalyzer(appContext) }
     val session by FileScanSession.state.collectAsStateWithLifecycle()
     var hasAccess by remember { mutableStateOf(analyzer.hasBroadFileAccess()) }
     var minSize by remember { mutableStateOf(50L * MB) }
@@ -66,6 +68,8 @@ fun VideoCleanerSectionV2() {
     var limit by remember { mutableIntStateOf(30) }
     var pendingFile by remember { mutableStateOf<CleanerFileItem?>(null) }
     var pendingGroup by remember { mutableStateOf<DuplicateFileGroup?>(null) }
+
+    LaunchedEffect(Unit) { FileScanSession.attach(appContext) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) hasAccess = analyzer.hasBroadFileAccess() }
@@ -75,11 +79,11 @@ fun VideoCleanerSectionV2() {
 
     fun scan(force:Boolean=false){
         if(!analyzer.hasBroadFileAccess()){ hasAccess=false; analyzer.openBroadFileAccessSettings(); return }
-        if(force) FileScanSession.refresh(analyzer) else FileScanSession.start(analyzer)
+        if(force) FileScanSession.refresh(appContext) else FileScanSession.start(appContext)
     }
 
-    pendingFile?.let{ item -> AlertDialog(onDismissRequest={pendingFile=null},title={Text("¿Eliminar ${item.name}?")},text={Text("Se liberarán ${vBytes(item.sizeBytes)}.")},confirmButton={TextButton(onClick={pendingFile=null;FileScanSession.delete(analyzer,listOf(item),"video")}){Text("Eliminar")}},dismissButton={TextButton(onClick={pendingFile=null}){Text("Cancelar")}}) }
-    pendingGroup?.let{ group -> val copies=group.files.filter{it.file.absolutePath!=group.keep.file.absolutePath}; AlertDialog(onDismissRequest={pendingGroup=null},title={Text("Conservar 1 y eliminar ${copies.size} copias")},text={Text("Solo se eliminarán videos con SHA-256 idéntico. Se conservará ${group.keep.name}.")},confirmButton={TextButton(onClick={pendingGroup=null;FileScanSession.delete(analyzer,copies,"video")}){Text("Eliminar copias")}},dismissButton={TextButton(onClick={pendingGroup=null}){Text("Cancelar")}}) }
+    pendingFile?.let{ item -> AlertDialog(onDismissRequest={pendingFile=null},title={Text("¿Eliminar ${item.name}?")},text={Text("Se liberarán ${vBytes(item.sizeBytes)}.")},confirmButton={TextButton(onClick={pendingFile=null;FileScanSession.delete(appContext,analyzer,listOf(item),"video")}){Text("Eliminar")}},dismissButton={TextButton(onClick={pendingFile=null}){Text("Cancelar")}}) }
+    pendingGroup?.let{ group -> val copies=group.files.filter{it.file.absolutePath!=group.keep.file.absolutePath}; AlertDialog(onDismissRequest={pendingGroup=null},title={Text("Conservar 1 y eliminar ${copies.size} copias")},text={Text("Solo se eliminarán videos con SHA-256 idéntico. Se conservará ${group.keep.name}.")},confirmButton={TextButton(onClick={pendingGroup=null;FileScanSession.delete(appContext,analyzer,copies,"video")}){Text("Eliminar copias")}},dismissButton={TextButton(onClick={pendingGroup=null}){Text("Cancelar")}}) }
 
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
         if(!hasAccess && Build.VERSION.SDK_INT>=Build.VERSION_CODES.R){
@@ -92,8 +96,8 @@ fun VideoCleanerSectionV2() {
                 Row(verticalAlignment=Alignment.CenterVertically){
                     Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.tertiary.copy(alpha=.12f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Movie,null,tint=MaterialTheme.colorScheme.tertiary)}
                     Column(Modifier.weight(1f).padding(start=12.dp)){
-                        Text(if(session.scanning) session.phaseLabel else "Videos",fontWeight=FontWeight.Bold,fontSize=17.sp)
-                        Text(if(session.scanning)"Analizando almacenamiento; puedes cambiar de pestaña." else "Grandes, antiguos y duplicados exactos.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if(session.scanning) session.phaseLabel.ifBlank { "Preparando análisis" } else "Videos",fontWeight=FontWeight.Bold,fontSize=17.sp)
+                        Text(if(session.scanning)"Trabajo persistente: puedes cambiar de pestaña o salir de LIA." else "Grandes, antiguos y duplicados exactos.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if(!session.scanning && !session.deleting)IconButton(onClick={scan(session.result!=null)}){Icon(Icons.Default.Refresh,"Actualizar")}
                 }
