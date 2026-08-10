@@ -144,15 +144,22 @@ object FileScanSession {
         deleteJob = scope.launch {
             _state.value = _state.value.copy(deleting = true, message = "Eliminando ${items.size} ${noun}(s)…")
             runCatching { analyzer.deleteFiles(items) }
-                .onSuccess { result ->
-                    val msg = if (result.failedNames.isEmpty()) {
-                        "${result.deletedCount} ${noun}(s) eliminados · ${formatBytes(result.deletedBytes)} liberados."
+                .onSuccess { deletion ->
+                    val msg = if (deletion.failedNames.isEmpty()) {
+                        "${deletion.deletedCount} ${noun}(s) eliminados · ${formatBytes(deletion.deletedBytes)} liberados."
                     } else {
-                        "${result.deletedCount} eliminados; ${result.failedNames.size} no pudieron borrarse."
+                        "${deletion.deletedCount} eliminados; ${deletion.failedNames.size} no pudieron borrarse."
                     }
-                    FileScanCache.clear(app)
-                    _state.value = _state.value.copy(deleting = false, result = null, message = msg)
-                    start(app, force = true)
+                    val current = _state.value.result
+                    val updated = current?.removePaths(deletion.deletedPaths)
+                    if (updated != null) FileScanCache.save(app, updated)
+                    _state.value = _state.value.copy(
+                        deleting = false,
+                        result = updated,
+                        done = updated?.files?.size ?: 0,
+                        total = updated?.files?.size ?: 0,
+                        message = msg
+                    )
                 }
                 .onFailure { error ->
                     _state.value = _state.value.copy(deleting = false, message = error.message ?: "No fue posible completar el borrado.")
@@ -161,10 +168,22 @@ object FileScanSession {
     }
 
     fun setMessage(message: String) { _state.value = _state.value.copy(message = message) }
+
     fun clear(context: Context, message: String? = null) {
         if (_state.value.scanning || deleteJob?.isActive == true) return
         FileScanCache.clear(context.applicationContext)
         _state.value = FileScanUiState(message = message)
+    }
+
+    private fun FileScanResult.removePaths(paths: Set<String>): FileScanResult {
+        if (paths.isEmpty()) return this
+        val remainingFiles = files.filterNot { it.file.absolutePath in paths }
+        val remainingByPath = remainingFiles.associateBy { it.file.absolutePath }
+        val groups = duplicateGroups.mapNotNull { group ->
+            val members = group.files.mapNotNull { remainingByPath[it.file.absolutePath] }
+            if (members.size > 1) DuplicateFileGroup(group.sha256, members.sortedByDescending { it.bestDateMs }) else null
+        }.sortedByDescending { it.recoverableBytes }
+        return FileScanResult(remainingFiles, groups)
     }
 
     private fun formatBytes(bytes: Long): String {
