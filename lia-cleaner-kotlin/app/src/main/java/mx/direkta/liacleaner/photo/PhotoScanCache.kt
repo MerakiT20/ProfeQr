@@ -28,6 +28,10 @@ object PhotoScanCache {
         write(context, current.quick ?: return, groups)
     }
 
+    fun save(context: Context, quick: PhotoScanResult, aiGroups: List<PhotoGroup>) {
+        write(context, quick, aiGroups)
+    }
+
     fun load(context: Context): CachedPhotoScan = runCatching {
         val file = File(context.filesDir, FILE_NAME)
         if (!file.exists()) return CachedPhotoScan(null, emptyList())
