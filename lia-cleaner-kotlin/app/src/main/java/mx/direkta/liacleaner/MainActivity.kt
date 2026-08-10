@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import mx.direkta.liacleaner.file.FileScanSession
+import mx.direkta.liacleaner.photo.PhotoScanSession
 import mx.direkta.liacleaner.system.AndroidSystemGatewayImpl
 import mx.direkta.liacleaner.system.CleanerPreferences
 import mx.direkta.liacleaner.ui.LiaCleanerRoot
@@ -18,6 +20,11 @@ class MainActivity : ComponentActivity() {
 
         preferences = CleanerPreferences(applicationContext)
         val systemGateway = AndroidSystemGatewayImpl(applicationContext)
+
+        // Reattach to WorkManager-backed scans before composing the UI. This lets
+        // LIA restore in-progress work and the last completed scan after process death.
+        FileScanSession.attach(applicationContext)
+        PhotoScanSession.attach(applicationContext)
 
         setContent {
             LiaCleanerTheme {
