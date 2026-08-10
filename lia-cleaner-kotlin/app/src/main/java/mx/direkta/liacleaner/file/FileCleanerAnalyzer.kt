@@ -1,5 +1,6 @@
 package mx.direkta.liacleaner.file
 
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.media.MediaScannerConnection
@@ -33,7 +34,6 @@ class FileCleanerAnalyzer(private val context: Context) {
         }
     }
 
-    /** Backwards-compatible API used by legacy screens. */
     suspend fun scan(
         onProgress: suspend (done: Int, total: Int) -> Unit = { _, _ -> }
     ): FileScanResult = scanDetailed { _, done, total -> onProgress(done, total) }
@@ -72,9 +72,7 @@ class FileCleanerAnalyzer(private val context: Context) {
                 kind = kindFor(file.name),
                 isDownload = relative.startsWith("Download/", true) || relative.startsWith("Downloads/", true)
             )
-            if (index + 1 == total || (index + 1) % 50 == 0) {
-                onProgress(ScanPhase.CATALOGING, index + 1, total)
-            }
+            if (index + 1 == total || (index + 1) % 50 == 0) onProgress(ScanPhase.CATALOGING, index + 1, total)
         }
 
         val candidateGroups = items.filter { it.sizeBytes > 0L }.groupBy { it.sizeBytes }.values.filter { it.size > 1 }
@@ -85,9 +83,7 @@ class FileCleanerAnalyzer(private val context: Context) {
             val byDigest = sameSize.mapNotNull { item ->
                 val digest = sha256(item.file)
                 hashed++
-                if (hashed == hashTotal || hashed % 10 == 0) {
-                    onProgress(ScanPhase.HASHING_DUPLICATES, hashed, hashTotal)
-                }
+                if (hashed == hashTotal || hashed % 10 == 0) onProgress(ScanPhase.HASHING_DUPLICATES, hashed, hashTotal)
                 digest?.let { it to item }
             }.groupBy({ it.first }, { it.second })
             byDigest.forEach { (digest, matches) ->
@@ -106,26 +102,47 @@ class FileCleanerAnalyzer(private val context: Context) {
         var deletedCount = 0
         var deletedBytes = 0L
         val failed = mutableListOf<String>()
-        val mediaPaths = mutableListOf<String>()
 
         files.distinctBy { it.file.absolutePath }.forEach { item ->
-            val success = runCatching {
-                if (!isAllowedPath(item.file)) false else item.file.delete()
-            }.getOrDefault(false)
+            val success = deleteSharedFile(item)
             if (success) {
                 deletedCount++
                 deletedBytes += item.sizeBytes
-                if (item.kind == CleanerFileKind.IMAGE || item.kind == CleanerFileKind.VIDEO || item.kind == CleanerFileKind.AUDIO) {
-                    mediaPaths += item.file.absolutePath
-                }
             } else failed += item.name
-        }
-
-        if (mediaPaths.isNotEmpty()) {
-            MediaScannerConnection.scanFile(context, mediaPaths.toTypedArray(), null, null)
         }
         return DeleteResult(deletedCount, deletedBytes, failed)
     }
+
+    private fun deleteSharedFile(item: CleanerFileItem): Boolean {
+        if (!isAllowedPath(item.file)) return false
+        val path = item.file.absolutePath
+
+        // MANAGE_EXTERNAL_STORAGE grants access to MediaStore.Files as well as direct
+        // shared-storage paths. Prefer deleting an indexed row so Android updates its
+        // media database atomically with the underlying file.
+        if (deleteMediaStoreEntry(path) == true) return true
+
+        val direct = runCatching { item.file.delete() }.getOrDefault(false)
+        if (direct && (item.kind == CleanerFileKind.IMAGE || item.kind == CleanerFileKind.VIDEO || item.kind == CleanerFileKind.AUDIO)) {
+            MediaScannerConnection.scanFile(context, arrayOf(path), null, null)
+        }
+        return direct
+    }
+
+    private fun deleteMediaStoreEntry(path: String): Boolean? = runCatching {
+        val filesUri = MediaStore.Files.getContentUri("external")
+        context.contentResolver.query(
+            filesUri,
+            arrayOf(MediaStore.Files.FileColumns._ID),
+            "${MediaStore.MediaColumns.DATA}=?",
+            arrayOf(path),
+            null
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            val rowUri = ContentUris.withAppendedId(filesUri, cursor.getLong(0))
+            context.contentResolver.delete(rowUri, null, null) > 0
+        }
+    }.getOrNull()
 
     private fun collectFiles(directory: File, output: MutableList<File>) {
         val children = runCatching { directory.listFiles() }.getOrNull() ?: return
