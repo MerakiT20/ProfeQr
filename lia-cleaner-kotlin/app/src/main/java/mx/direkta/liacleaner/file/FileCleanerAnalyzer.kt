@@ -3,12 +3,15 @@ package mx.direkta.liacleaner.file
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Size
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -102,24 +105,66 @@ class FileCleanerAnalyzer(private val context: Context) {
         var deletedCount = 0
         var deletedBytes = 0L
         val failed = mutableListOf<String>()
+        val deletedPaths = mutableSetOf<String>()
 
         files.distinctBy { it.file.absolutePath }.forEach { item ->
             val success = deleteSharedFile(item)
             if (success) {
                 deletedCount++
                 deletedBytes += item.sizeBytes
+                deletedPaths += item.file.absolutePath
             } else failed += item.name
         }
-        return DeleteResult(deletedCount, deletedBytes, failed)
+        return DeleteResult(deletedCount, deletedBytes, failed, deletedPaths)
     }
+
+    suspend fun loadVideoThumbnail(item: CleanerFileItem, width: Int = 220, height: Int = 140): Bitmap? = withContext(Dispatchers.IO) {
+        if (item.kind != CleanerFileKind.VIDEO) return@withContext null
+        val mediaUri = mediaUriFor(item.file)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mediaUri != null) {
+            runCatching { context.contentResolver.loadThumbnail(mediaUri, Size(width, height), null) }.getOrNull()?.let { return@withContext it }
+        }
+        runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(item.file.absolutePath)
+                retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            } finally {
+                retriever.release()
+            }
+        }.getOrNull()
+    }
+
+    fun openVideo(item: CleanerFileItem): Boolean {
+        if (item.kind != CleanerFileKind.VIDEO) return false
+        val uri = mediaUriFor(item.file) ?: return false
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/*")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return runCatching {
+            context.startActivity(intent)
+            true
+        }.getOrDefault(false)
+    }
+
+    fun mediaUriFor(file: File): Uri? = runCatching {
+        val filesUri = MediaStore.Files.getContentUri("external")
+        context.contentResolver.query(
+            filesUri,
+            arrayOf(MediaStore.Files.FileColumns._ID),
+            "${MediaStore.MediaColumns.DATA}=?",
+            arrayOf(file.absolutePath),
+            null
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            ContentUris.withAppendedId(filesUri, cursor.getLong(0))
+        }
+    }.getOrNull()
 
     private fun deleteSharedFile(item: CleanerFileItem): Boolean {
         if (!isAllowedPath(item.file)) return false
         val path = item.file.absolutePath
-
-        // MANAGE_EXTERNAL_STORAGE grants access to MediaStore.Files as well as direct
-        // shared-storage paths. Prefer deleting an indexed row so Android updates its
-        // media database atomically with the underlying file.
         if (deleteMediaStoreEntry(path) == true) return true
 
         val direct = runCatching { item.file.delete() }.getOrDefault(false)
@@ -208,7 +253,13 @@ class FileCleanerAnalyzer(private val context: Context) {
         else -> CleanerFileKind.OTHER
     }
 
-    data class DeleteResult(val deletedCount: Int, val deletedBytes: Long, val failedNames: List<String>)
+    data class DeleteResult(
+        val deletedCount: Int,
+        val deletedBytes: Long,
+        val failedNames: List<String>,
+        val deletedPaths: Set<String>
+    )
+
     private data class DownloadMetadata(val addedMs: Long?, val modifiedMs: Long?)
 
     companion object {
