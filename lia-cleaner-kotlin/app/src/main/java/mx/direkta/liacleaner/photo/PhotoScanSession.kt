@@ -1,5 +1,10 @@
 package mx.direkta.liacleaner.photo
 
+import android.content.Context
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,88 +26,136 @@ data class PhotoScanUiState(
     val message: String? = null
 )
 
-/**
- * Process-level scan session. Unlike rememberCoroutineScope(), this scope is not
- * cancelled when the user rotates the phone or changes tabs, so an active scan
- * keeps running and its progress/results remain observable when the UI returns.
- */
+/** Persistent photo scan state backed by WorkManager and a local result cache. */
 object PhotoScanSession {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(PhotoScanUiState())
     val state: StateFlow<PhotoScanUiState> = _state.asStateFlow()
 
-    private var quickJob: Job? = null
-    private var advancedJob: Job? = null
+    private var quickObserver: Job? = null
+    private var advancedObserver: Job? = null
+    private var attached = false
 
-    fun startQuick(analyzer: PhotoAnalyzer) {
-        if (quickJob?.isActive == true || advancedJob?.isActive == true) return
-        quickJob = scope.launch {
-            _state.value = _state.value.copy(
-                scanning = true,
-                advancedScanning = false,
-                done = 0,
-                total = 0,
-                aiGroups = emptyList(),
-                message = "Analizando fotos…"
-            )
-            runCatching {
-                analyzer.quickScan { done, total ->
-                    // Updating Compose thousands of times adds overhead. Throttle the
-                    // observable progress while still keeping the exact final value.
-                    if (done == total || done % 25 == 0) {
-                        _state.value = _state.value.copy(done = done, total = total)
+    fun attach(context: Context) {
+        if (attached && quickObserver?.isActive == true && advancedObserver?.isActive == true) return
+        val app = context.applicationContext
+        attached = true
+        if (_state.value.quickResult == null) {
+            val cached = PhotoScanCache.load(app)
+            if (cached.quick != null) {
+                _state.value = _state.value.copy(
+                    quickResult = cached.quick,
+                    aiGroups = cached.aiGroups,
+                    message = "Último análisis de fotos restaurado."
+                )
+            }
+        }
+
+        val manager = WorkManager.getInstance(app)
+        quickObserver?.cancel()
+        quickObserver = scope.launch {
+            manager.getWorkInfosForUniqueWorkFlow(PhotoQuickScanWorker.UNIQUE_NAME).collect { infos ->
+                val info = infos.lastOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+                    ?: infos.lastOrNull() ?: return@collect
+                when (info.state) {
+                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                        _state.value = _state.value.copy(scanning = true, advancedScanning = false, message = "Análisis de fotos en cola…")
                     }
+                    WorkInfo.State.RUNNING -> {
+                        _state.value = _state.value.copy(
+                            scanning = true,
+                            advancedScanning = false,
+                            done = info.progress.getInt(PhotoQuickScanWorker.KEY_DONE, 0),
+                            total = info.progress.getInt(PhotoQuickScanWorker.KEY_TOTAL, 0),
+                            message = "Analizando fotos por hash…"
+                        )
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        val cached = PhotoScanCache.load(app)
+                        _state.value = _state.value.copy(
+                            scanning = false,
+                            done = cached.quick?.photos?.size ?: 0,
+                            total = cached.quick?.photos?.size ?: 0,
+                            quickResult = cached.quick,
+                            aiGroups = cached.aiGroups,
+                            message = "Análisis por hash terminado."
+                        )
+                    }
+                    WorkInfo.State.FAILED -> {
+                        _state.value = _state.value.copy(scanning = false, message = info.outputData.getString(PhotoQuickScanWorker.KEY_ERROR) ?: "No fue posible analizar las fotos.")
+                    }
+                    WorkInfo.State.CANCELLED -> _state.value = _state.value.copy(scanning = false)
                 }
-            }.onSuccess { result ->
-                _state.value = _state.value.copy(
-                    scanning = false,
-                    done = result.photos.size,
-                    total = result.photos.size,
-                    quickResult = result,
-                    message = "Análisis por hash terminado."
-                )
-            }.onFailure { error ->
-                _state.value = _state.value.copy(
-                    scanning = false,
-                    message = error.message ?: "No fue posible analizar las fotos."
-                )
+            }
+        }
+
+        advancedObserver?.cancel()
+        advancedObserver = scope.launch {
+            manager.getWorkInfosForUniqueWorkFlow(PhotoAdvancedScanWorker.UNIQUE_NAME).collect { infos ->
+                val info = infos.lastOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+                    ?: infos.lastOrNull() ?: return@collect
+                when (info.state) {
+                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                        _state.value = _state.value.copy(advancedScanning = true, message = "Análisis avanzado en cola…")
+                    }
+                    WorkInfo.State.RUNNING -> {
+                        _state.value = _state.value.copy(
+                            advancedScanning = true,
+                            done = info.progress.getInt(PhotoAdvancedScanWorker.KEY_DONE, 0),
+                            total = info.progress.getInt(PhotoAdvancedScanWorker.KEY_TOTAL, 0),
+                            message = "Analizando similitud con IA…"
+                        )
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        val cached = PhotoScanCache.load(app)
+                        _state.value = _state.value.copy(
+                            advancedScanning = false,
+                            quickResult = cached.quick ?: _state.value.quickResult,
+                            aiGroups = cached.aiGroups,
+                            message = "Análisis avanzado terminado."
+                        )
+                    }
+                    WorkInfo.State.FAILED -> {
+                        _state.value = _state.value.copy(advancedScanning = false, message = info.outputData.getString(PhotoAdvancedScanWorker.KEY_ERROR) ?: "No fue posible completar el análisis avanzado.")
+                    }
+                    WorkInfo.State.CANCELLED -> _state.value = _state.value.copy(advancedScanning = false)
+                }
             }
         }
     }
 
-    fun startAdvanced(analyzer: AdvancedPhotoAnalyzer) {
-        val quick = _state.value.quickResult ?: return
-        if (quickJob?.isActive == true || advancedJob?.isActive == true) return
-        advancedJob = scope.launch {
-            _state.value = _state.value.copy(
-                advancedScanning = true,
-                done = 0,
-                total = 0,
-                message = "Analizando similitud con IA…"
-            )
-            runCatching {
-                analyzer.analyze(quick) { done, total ->
-                    if (done == total || done % 10 == 0) {
-                        _state.value = _state.value.copy(done = done, total = total)
-                    }
-                }
-            }.onSuccess { groups ->
-                _state.value = _state.value.copy(
-                    advancedScanning = false,
-                    aiGroups = groups,
-                    message = "Análisis avanzado terminado."
-                )
-            }.onFailure { error ->
-                _state.value = _state.value.copy(
-                    advancedScanning = false,
-                    message = error.message ?: "No fue posible completar el análisis avanzado."
-                )
-            }
-        }
+    fun startQuick(context: Context) {
+        val app = context.applicationContext
+        attach(app)
+        if (_state.value.scanning || _state.value.advancedScanning) return
+        WorkManager.getInstance(app).cancelUniqueWork(PhotoAdvancedScanWorker.UNIQUE_NAME)
+        val request = OneTimeWorkRequestBuilder<PhotoQuickScanWorker>().addTag(PhotoQuickScanWorker.TAG).build()
+        WorkManager.getInstance(app).enqueueUniqueWork(PhotoQuickScanWorker.UNIQUE_NAME, ExistingWorkPolicy.REPLACE, request)
+        _state.value = _state.value.copy(
+            scanning = true,
+            advancedScanning = false,
+            done = 0,
+            total = 0,
+            aiGroups = emptyList(),
+            message = "Preparando análisis persistente de fotos…"
+        )
     }
 
-    fun invalidateResults(message: String = "Contenido actualizado. Analiza de nuevo para verificar resultados.") {
-        if (quickJob?.isActive == true || advancedJob?.isActive == true) return
+    fun startAdvanced(context: Context) {
+        val app = context.applicationContext
+        attach(app)
+        if (_state.value.quickResult == null || _state.value.scanning || _state.value.advancedScanning) return
+        val request = OneTimeWorkRequestBuilder<PhotoAdvancedScanWorker>().addTag(PhotoAdvancedScanWorker.TAG).build()
+        WorkManager.getInstance(app).enqueueUniqueWork(PhotoAdvancedScanWorker.UNIQUE_NAME, ExistingWorkPolicy.REPLACE, request)
+        _state.value = _state.value.copy(advancedScanning = true, done = 0, total = 0, message = "Preparando análisis avanzado…")
+    }
+
+    fun invalidateResults(context: Context, message: String = "Contenido actualizado. Analiza de nuevo para verificar resultados.") {
+        val app = context.applicationContext
+        val manager = WorkManager.getInstance(app)
+        manager.cancelUniqueWork(PhotoQuickScanWorker.UNIQUE_NAME)
+        manager.cancelUniqueWork(PhotoAdvancedScanWorker.UNIQUE_NAME)
+        PhotoScanCache.clear(app)
         _state.value = PhotoScanUiState(message = message)
     }
 
