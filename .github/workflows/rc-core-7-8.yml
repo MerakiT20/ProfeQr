@@ -1,0 +1,53 @@
+name: ProfeQr RC Core 7 and 8
+on:
+  push:
+    branches: [agent/rc-core-7-8-offline-backup]
+    paths:
+      - '.github/workflows/rc-core-7-8.yml'
+permissions:
+  contents: write
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned vendor libraries
+        run: |
+          mkdir -p vendor
+          curl -fL --retry 3 https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js -o vendor/html5-qrcode.min.js
+          curl -fL --retry 3 https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js -o vendor/qrcode.min.js
+          curl -fL --retry 3 https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js -o vendor/chart.umd.min.js
+          curl -fL --retry 3 https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js -o vendor/xlsx.bundle.min.js
+          curl -fL --retry 3 https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js -o vendor/jspdf.umd.min.js
+          test -s vendor/html5-qrcode.min.js
+          test -s vendor/qrcode.min.js
+          test -s vendor/chart.umd.min.js
+          test -s vendor/xlsx.bundle.min.js
+          test -s vendor/jspdf.umd.min.js
+      - name: Apply Core 7 and 8 migration
+        run: python3 .tmp/rc78.py
+      - name: Validate JavaScript syntax
+        run: |
+          for f in js/*.js sw.js; do node --check "$f"; done
+      - name: Validate offline invariants
+        run: |
+          ! grep -Eq 'https://(cdnjs|cdn.jsdelivr|fonts.googleapis)' index.html
+          ! grep -Eq 'https://(cdnjs|cdn.jsdelivr|fonts.googleapis)' sw.js
+          grep -q './vendor/html5-qrcode.min.js' index.html
+          grep -q './vendor/jspdf.umd.min.js' sw.js
+          grep -q './js/backup.js' index.html
+      - name: Validate backup invariants
+        run: |
+          grep -q "PROFEQR_BACKUP_VERSION=1" js/backup.js
+          grep -q "delete copy.config.license" js/backup.js
+          grep -q "bitacoraDraft" js/backup.js
+          grep -q "SHA-256" js/backup.js
+          grep -q "accept=\".profeqr,.json" js/settings.js
+      - name: Clean temporary files and commit
+        run: |
+          rm -rf .tmp .github/workflows/rc-core-7-8.yml .tmp_rc78_marker
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Bundle offline dependencies and integral backups'
+          git push
