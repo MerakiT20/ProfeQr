@@ -450,3 +450,9 @@ textarea:focus{outline:none;border-color:var(--primary3);box-shadow:0 0 0 3px rg
 /* RC Core 9 · visor de documentos */
 .doc-modal{position:fixed;inset:0;background:rgba(15,23,42,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:12px}
 .doc-modal-card{width:min(980px,100%);max-height:94vh;overflow:auto;background:var(--card);border-radius:18px;padding:14px;box-shadow:0 24px 80px rgba(0,0,0,.35)}
+
+.document-viewer-host{margin-top:10px;text-align:center;max-height:80vh;overflow:auto;background:var(--bg2);border-radius:14px;padding:10px}
+.document-pdf-toolbar{position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;justify-content:center;background:var(--card);padding:8px;border-bottom:1px solid var(--line)}
+.pdf-pages{display:grid;gap:12px;justify-items:center;padding:10px 0}
+.pdf-page-wrap{background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.18);max-width:100%}
+.pdf-page-wrap canvas{display:block;max-width:100%}

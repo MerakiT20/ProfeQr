@@ -131,15 +131,55 @@ async function storeDocumentFile(file,category){
 async function openStoredDocument(id){
   try{
     const d=await documentsGet(id); if(!d?.blob) return toast('Documento no encontrado');
-    if(documentsObjectUrl) URL.revokeObjectURL(documentsObjectUrl);
-    documentsObjectUrl=URL.createObjectURL(d.blob);
+    closeStoredDocumentViewer();
     const overlay=document.createElement('div'); overlay.className='doc-modal'; overlay.id='document-modal';
-    const viewer=String(d.type||'').startsWith('image/')?`<img src="${documentsObjectUrl}" alt="${esc(d.name)}" style="max-width:100%;max-height:78vh;object-fit:contain">`:`<iframe src="${documentsObjectUrl}" title="${esc(d.name)}" style="width:100%;height:78vh;border:0;background:#fff"></iframe>`;
-    overlay.innerHTML=`<div class="doc-modal-card"><div class="item"><div><div class="item-title">${esc(d.name)}</div><div class="item-sub">${documentsHumanSize(d.size)}</div></div><button class="mini" id="document-modal-close">Cerrar</button></div><div style="margin-top:10px;text-align:center">${viewer}</div></div>`;
+    const isImage=String(d.type||'').startsWith('image/');
+    overlay.innerHTML=`<div class="doc-modal-card"><div class="item"><div><div class="item-title">${esc(d.name)}</div><div class="item-sub">${documentsHumanSize(d.size)}</div></div><button class="mini" id="document-modal-close">Cerrar</button></div><div id="document-viewer-host" class="document-viewer-host"><div class="small">Abriendo documento...</div></div></div>`;
     document.body.appendChild(overlay);
     document.getElementById('document-modal-close').onclick=closeStoredDocumentViewer;
     overlay.addEventListener('click',e=>{ if(e.target===overlay) closeStoredDocumentViewer(); });
-  }catch(err){ console.error(err); toast('No se pudo abrir el documento'); }
+    if(isImage){
+      documentsObjectUrl=URL.createObjectURL(d.blob);
+      document.getElementById('document-viewer-host').innerHTML=`<img src="${documentsObjectUrl}" alt="${esc(d.name)}" style="max-width:100%;max-height:78vh;object-fit:contain">`;
+      return;
+    }
+    await renderPdfInsideApp(d.blob);
+  }catch(err){ console.error(err); toast('No se pudo abrir el documento'); closeStoredDocumentViewer(); }
+}
+async function renderPdfInsideApp(blob){
+  const host=document.getElementById('document-viewer-host'); if(!host) return;
+  try{
+    const pdfjs=await import('../vendor/pdfjs/pdf.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc='../vendor/pdfjs/pdf.worker.mjs';
+    const data=new Uint8Array(await blob.arrayBuffer());
+    const task=pdfjs.getDocument({data});
+    const pdf=await task.promise;
+    host.innerHTML=`<div class="document-pdf-toolbar"><span>${pdf.numPages} página(s)</span><button class="mini" id="pdf-zoom-out">−</button><span id="pdf-zoom-label">100%</span><button class="mini" id="pdf-zoom-in">+</button></div><div id="pdf-pages" class="pdf-pages"></div>`;
+    let scale=1.15;
+    const pagesHost=document.getElementById('pdf-pages');
+    const draw=async()=>{
+      pagesHost.innerHTML='';
+      for(let n=1;n<=pdf.numPages;n++){
+        const page=await pdf.getPage(n);
+        const viewport=page.getViewport({scale});
+        const wrap=document.createElement('div'); wrap.className='pdf-page-wrap';
+        const canvas=document.createElement('canvas');
+        const ctx=canvas.getContext('2d',{alpha:false});
+        const ratio=Math.min(window.devicePixelRatio||1,2);
+        canvas.width=Math.floor(viewport.width*ratio); canvas.height=Math.floor(viewport.height*ratio);
+        canvas.style.width=`${Math.floor(viewport.width)}px`; canvas.style.maxWidth='100%'; canvas.style.height='auto';
+        wrap.appendChild(canvas); pagesHost.appendChild(wrap);
+        await page.render({canvasContext:ctx,viewport,transform:ratio===1?null:[ratio,0,0,ratio,0,0]}).promise;
+      }
+      const label=document.getElementById('pdf-zoom-label'); if(label) label.textContent=`${Math.round(scale/1.15*100)}%`;
+    };
+    document.getElementById('pdf-zoom-in').onclick=async()=>{ scale=Math.min(scale+0.2,2.35); await draw(); };
+    document.getElementById('pdf-zoom-out').onclick=async()=>{ scale=Math.max(scale-0.2,0.75); await draw(); };
+    await draw();
+  }catch(err){
+    console.error('PDF.js viewer error:',err);
+    host.innerHTML='<div class="help">No se pudo representar este PDF dentro de ProfeQR. Puedes usar el botón Exportar desde la lista de documentos.</div>';
+  }
 }
 function closeStoredDocumentViewer(){ document.getElementById('document-modal')?.remove(); if(documentsObjectUrl){URL.revokeObjectURL(documentsObjectUrl);documentsObjectUrl='';} }
 async function downloadStoredDocument(id){

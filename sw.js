@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-rc9-documents-v1';
+const CACHE_VERSION = 'profeqr-rc9-pdfjs-v1';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
@@ -12,6 +12,8 @@ const CORE = [
   "./js/core.js",
   "./js/security.js",
   "./js/documents.js",
+  "./vendor/pdfjs/pdf.mjs",
+  "./vendor/pdfjs/pdf.worker.mjs",
   "./js/license.js",
   "./js/shell.js",
   "./js/profiles.js",
