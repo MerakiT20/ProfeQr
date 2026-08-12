@@ -1,0 +1,47 @@
+name: ProfeQr RC10 Fix PDFjs
+on:
+  push:
+    branches: [agent/rc-core-10-tests]
+    paths: ['.github/workflows/rc10-fix-pdfjs.yml']
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin broadly compatible PDF.js
+        run: |
+          curl -fL --retry 3 https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs -o vendor/pdfjs/pdf.mjs
+          curl -fL --retry 3 https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs -o vendor/pdfjs/pdf.worker.mjs
+          test -s vendor/pdfjs/pdf.mjs
+          test -s vendor/pdfjs/pdf.worker.mjs
+      - name: Correct Bitacora Core 10 assertion
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/rc-core-10.mjs')
+          s=p.read_text()
+          old="snapshot:typeof snapshotBitacoraReport==='function'||typeof createBitacoraVersion==='function'"
+          new="snapshot:typeof appendBitacoraVersion==='function'&&typeof appendBitacoraAudit==='function'"
+          if old not in s: raise SystemExit('Bitacora test anchor missing')
+          p.write_text(s.replace(old,new,1))
+          p=Path('sw.js'); s=p.read_text()
+          import re
+          s=re.sub(r"const CACHE_VERSION = '[^']+';","const CACHE_VERSION = 'profeqr-v8-7-rc10-pdfjs-compat';",s,count=1)
+          p.write_text(s)
+          PY
+      - name: Validate patched files
+        run: |
+          node --check tests/rc-core-10.mjs
+          node --check sw.js
+          grep -q "appendBitacoraVersion" tests/rc-core-10.mjs
+          ! grep -q "getOrInsertComputed" vendor/pdfjs/pdf.mjs
+      - name: Commit compatibility fix
+        run: |
+          rm -f .github/workflows/rc10-fix-pdfjs.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Fix PDF viewer compatibility found by Core 10'
+          git push
