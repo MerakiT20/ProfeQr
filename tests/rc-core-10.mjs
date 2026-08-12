@@ -139,7 +139,7 @@ await test('PDF is rendered inside ProfeQr with PDF.js canvas', async()=>{
 });
 
 await test('Bitacora closed-report protection primitives are present', async()=>{
-  const out=await page.evaluate(()=>({normalize:typeof normalizeBitacoraReport==='function',status:typeof buildReportStatus==='function',snapshot:typeof snapshotBitacoraReport==='function'||typeof createBitacoraVersion==='function',save:typeof saveBitacoraDraft==='function'}));
+  const out=await page.evaluate(()=>({normalize:typeof normalizeBitacoraReport==='function',status:typeof buildReportStatus==='function',snapshot:typeof appendBitacoraVersion==='function'&&typeof appendBitacoraAudit==='function',save:typeof saveBitacoraDraft==='function'}));
   assert(out.normalize && out.status && out.save,'Bitacora core functions missing');
   assert(out.snapshot,'Bitacora version snapshot function missing');
 });
