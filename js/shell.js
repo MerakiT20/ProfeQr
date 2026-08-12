@@ -206,6 +206,7 @@ function renderShell(){
       <div class="drawer-sep"></div>
       <div class="drawer-group">Recursos</div>
       ${navBtn('biblioteca','📚 Biblioteca')}
+      ${navBtn('documents','📁 Documentos')}
       ${navBtn('bitacora','📋 Bitácora')}
       <div class="drawer-sep"></div>
       <div class="drawer-group">Grupo</div>
@@ -239,8 +240,8 @@ function bindGlobal(){
     } else if(currentScreen === 'studentProfile'){
       currentScreen = 'students';
       renderApp();
-    } else if(currentScreen === 'docViewer'){
-      currentScreen = 'biblioteca';
+    } else if(currentScreen === 'docViewer' || currentScreen === 'documents'){
+      currentScreen = 'home';
       renderApp();
     } else {
       await stopDynamicModules();

@@ -63,7 +63,7 @@ function renderSettings(){
   </div>
   <div class="card">
     <div class="section-title">Respaldo integral</div>
-    <div class="help">El archivo .profeqr guarda la base de datos y borradores con verificación de integridad. La licencia y la identidad del dispositivo no se clonan.</div>
+    <div class="help">El archivo .profeqr guarda datos, borradores y Documentos (PDF/imágenes) con verificación de integridad. La licencia y la identidad del dispositivo no se clonan.</div>
     <div class="row row2" style="margin-top:10px">
       <button class="btn secondary" id="export-json-btn">Exportar respaldo .profeqr</button>
       <label class="btn primary" style="display:grid;place-items:center">
@@ -186,7 +186,7 @@ function bindSettings(){
     if(!ok){ importInput.value=''; return; }
     try{
       const result=await importProfeQrBackupFile(file);
-      toast(result.legacy?'Respaldo JSON antiguo restaurado':'Respaldo integral restaurado');
+      toast(result.legacy?'Respaldo JSON antiguo restaurado':`Respaldo integral restaurado · ${result.documentCount||0} documento(s)`);
       renderApp();
     }catch(err){ console.error(err); toast(err?.message||'No se pudo restaurar el respaldo'); }
     finally{ importInput.value=''; }

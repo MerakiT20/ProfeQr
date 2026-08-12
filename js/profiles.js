@@ -1,18 +1,11 @@
-// ── DOC VIEWER & STUDENT PROFILE — stubs conectados ────────────
-// docViewer: redirige a Biblioteca (es donde viven los documentos)
+// ── DOCUMENTOS — puente de compatibilidad ─────────────────────
 let docViewerCategory = '';
 function openDocViewer(category){
   docViewerCategory = category||'';
-  librarySectionFilter = category||'Todas';
-  currentScreen = 'biblioteca';
-  renderCurrentScreen();
+  openDocumentsCategory(category||'todos');
 }
-function renderDocViewer(){
-  // Stub: redirige automáticamente a biblioteca
-  openDocViewer(docViewerCategory);
-  return '<div class="card"><div class="small">Redirigiendo a Biblioteca...</div></div>';
-}
-function bindDocViewer(){}
+function renderDocViewer(){ return renderDocuments(); }
+function bindDocViewer(){ bindDocuments(); }
 
 // studentProfile: perfil de alumno con datos reales del DB
 let studentProfileId = '';
@@ -86,6 +79,7 @@ function renderCurrentScreen(){
   if(currentScreen==='cards') html += renderCards();
   if(currentScreen==='reports') html += renderReports();
   if(currentScreen==='settings')      html += renderSettings();
+  if(currentScreen==='documents')     html += renderDocuments();
   if(currentScreen==='docViewer')      html += renderDocViewer();
   if(currentScreen==='studentProfile') html += renderStudentProfile();
   host.innerHTML = html;
@@ -104,6 +98,7 @@ function renderCurrentScreen(){
   if(currentScreen==='cards') bindCards();
   if(currentScreen==='reports') bindReports();
   if(currentScreen==='settings')      bindSettings();
+  if(currentScreen==='documents')     bindDocuments();
   if(currentScreen==='docViewer')      bindDocViewer();
   if(currentScreen==='studentProfile') bindStudentProfile();
 }
@@ -152,7 +147,7 @@ function renderHome(){
     {id:'agenda',    icon:'clock',        label:'Horario',        sub:'Busca en tu agenda'},
     {id:'agenda',    icon:'calendar-all', label:'Calendario',     sub:'Fechas clave y eventos'},
     {id:'guardias',  icon:'star-guard',   label:'Rol de guardias',sub:'Consulta el rol de guardias'},
-    {id:'biblioteca',icon:'folder',       label:'Documentos',     sub:'Recursos y formatos'},
+    {id:'documents', icon:'folder',       label:'Documentos',     sub:'Horario, calendario y archivos'},
     {id:'settings',  icon:'settings',     label:'Ajustes',        sub:'Preferencias de la aplicación'},
   ];
 
