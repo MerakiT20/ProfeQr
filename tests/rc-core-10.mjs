@@ -135,7 +135,7 @@ await test('PDF is rendered inside ProfeQr with PDF.js canvas', async()=>{
   const info=await page.evaluate(()=>({canvases:document.querySelectorAll('#document-modal canvas').length,iframe:!!document.querySelector('#document-modal iframe'),text:document.querySelector('#document-modal')?.innerText||''}));
   assert(info.canvases>=2,`Rendered ${info.canvases} PDF pages`);
   assert(info.iframe===false,'PDF fell back to iframe');
-  closeStoredDocumentViewer();
+  await page.evaluate(()=>closeStoredDocumentViewer());
 });
 
 await test('Bitacora closed-report protection primitives are present', async()=>{
