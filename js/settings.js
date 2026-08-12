@@ -99,14 +99,15 @@ function bindSettings(){
     r.readAsDataURL(file);
   };
 
-  document.getElementById('change-pin-btn')?.addEventListener('click',()=>{
+  document.getElementById('change-pin-btn')?.addEventListener('click',async ()=>{
     const actual=document.getElementById('set-pin-actual').value;
     const nuevo=document.getElementById('set-pin-nuevo').value;
     const conf=document.getElementById('set-pin-confirm').value;
-    if(actual!==db.config.pin){ toast('PIN actual incorrecto'); return; }
+    if(!(await verifyPinCredential(actual))){ toast('PIN actual incorrecto'); return; }
     if(!/^\d{4}$/.test(nuevo)){ toast('Nuevo PIN debe ser 4 digitos'); return; }
     if(nuevo!==conf){ toast('PINes no coinciden'); return; }
-    db.config.pin=nuevo; saveDb(); toast('PIN actualizado');
+    try{ await setPinCredential(nuevo); }catch(e){ toast('No se pudo proteger el PIN'); return; }
+    if(!saveDb()) return; toast('PIN actualizado');
     ['set-pin-actual','set-pin-nuevo','set-pin-confirm'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   });
     document.querySelectorAll('[data-theme]').forEach(btn=>btn.onclick = ()=>{
@@ -152,7 +153,7 @@ function bindSettings(){
   };
 
   document.getElementById('export-json-btn').onclick = ()=>{
-    const blob = new Blob([JSON.stringify(db,null,2)],{type:'application/json'});
+    const blob = new Blob([JSON.stringify(sanitizedBackupDb(),null,2)],{type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `respaldo_profeqr_${today()}.json`;
@@ -167,9 +168,11 @@ function bindSettings(){
     const ok = confirm('⚠️ Esto reemplazará TODOS los datos actuales con el respaldo. Esta acción no se puede deshacer. ¿Continuar?');
     if(!ok){ importInput.value = ''; return; }
     const r = new FileReader();
-    r.onload = ()=> {
+    r.onload = async ()=> {
       try{
+        if(!canWrite()) return writeBlockedMessage();
         db = safeDb(JSON.parse(r.result));
+        try{ await migrateLegacyPinSecurity(); }catch(e){ console.error('PIN import migration error:',e); }
         if(!saveDb()) return;
         toast('Respaldo importado');
         renderApp();

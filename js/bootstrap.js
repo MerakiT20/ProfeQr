@@ -1,10 +1,11 @@
 // RC Core 1: punto único de inicialización.
 // Debe cargarse después de todos los módulos funcionales.
 let appBootstrapped = false;
-function bootstrapProfeQr(){
+async function bootstrapProfeQr(){
   if(appBootstrapped) return;
   appBootstrapped = true;
   hydrateDb();
+  try{ await migrateLegacyPinSecurity(); }catch(e){ console.error('PIN migration error:',e); }
   initApp();
 }
 

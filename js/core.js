@@ -153,7 +153,17 @@ function hydrateDb(){
   return db;
 }
 
-function saveDb(){
+function restorePersistedDb(){
+  try{ db=safeDb(JSON.parse(localStorage.getItem(KEY))||emptyDb()); return true; }
+  catch(e){ console.error('restorePersistedDb error:',e); return false; }
+}
+function saveDb(options={}){
+  const system=!!(options&&options.system===true);
+  if(!system && typeof canWrite==='function' && !canWrite()){
+    restorePersistedDb();
+    writeBlockedMessage();
+    return false;
+  }
   try{
     localStorage.setItem(KEY, JSON.stringify(db));
     return true;
@@ -329,9 +339,10 @@ function toast(msg){
   window.__toastTimer = setTimeout(()=>el.classList.add('hidden'),2200);
 }
 
-function isExpired(){ return today() > LICENSE_END; }
-function canWrite(){ return !isExpired(); }
-function writeBlockedMessage(){ toast('La licencia de este ciclo venció el 30 de julio de 2027. Puedes consultar y exportar, pero no capturar nuevos datos.'); }
+function licenseExpiryDate(){ return db?.config?.license?.expiresAt || LICENSE_END; }
+function isExpired(){ return !!db?.config && today() > licenseExpiryDate(); }
+function canWrite(){ return !db?.config || !isExpired(); }
+function writeBlockedMessage(){ toast(`Licencia vencida (${licenseExpiryDate()}). Puedes consultar y exportar, pero no modificar datos.`); }
 
 window.addEventListener('error', e => {
   console.error(e);

@@ -1,10 +1,10 @@
 // ── PIN ──
 function initApp(){
   if(!db.config){ document.getElementById('root').innerHTML=renderSetup(); bindSetup(); return; }
-  if(db.config.pin){ showPinScreen(); } else { applyTheme(db.config.theme||'professional'); renderApp(); }
+  if(hasPinCredential()){ showPinScreen(); } else { applyTheme(db.config.theme||'professional'); renderApp(); }
 }
 function showPinScreen(){
-  pinBuffer=''; pinFailCount=0; applyTheme(db.config.theme||'professional');
+  pinBuffer=''; pinFailCount=pinSecurityState().failCount; applyTheme(db.config.theme||'professional');
   const hasDraft=wizDraftExists();
   document.getElementById('root').innerHTML=`
   <div class="pin-wrap">
@@ -27,19 +27,24 @@ function showPinScreen(){
 }
 function pinKey(k){
   if(pinBuffer.length>=4) return;
-  if(pinFailCount>=5){ document.getElementById('pin-err').textContent='Demasiados intentos. Recarga la app.'; return; }
-  pinBuffer+=String(k); updatePinDots(); if(pinBuffer.length===4) setTimeout(checkPin,160);
+  const remain=pinLockRemainingMs();
+  if(remain>0){ const e=document.getElementById('pin-err'); if(e) e.textContent=`Acceso bloqueado. Intenta en ${Math.ceil(remain/60000)} min.`; return; }
+  pinBuffer+=String(k); updatePinDots(); if(pinBuffer.length===4) setTimeout(()=>checkPin(),160);
 }
 function pinDel(){ if(pinBuffer.length>0){ pinBuffer=pinBuffer.slice(0,-1); updatePinDots(); } }
 function updatePinDots(){ for(let i=0;i<4;i++){ const el=document.getElementById('pd'+i); if(el) el.classList.toggle('filled',i<pinBuffer.length); } }
-function checkPin(){
-  if(pinBuffer===db.config.pin){
-    pinBuffer=''; pinFailCount=0;
+async function checkPin(){
+  const remain=pinLockRemainingMs();
+  if(remain>0){ const e=document.getElementById('pin-err'); if(e) e.textContent=`Acceso bloqueado. Intenta en ${Math.ceil(remain/60000)} min.`; pinBuffer=''; updatePinDots(); return; }
+  let ok=false;
+  try{ ok=await verifyPinCredential(pinBuffer); }catch(err){ console.error(err); }
+  if(ok){
+    pinBuffer=''; pinFailCount=0; clearPinFailures();
     if(wizDraftLoad()){ currentScreen='bitacoraForm'; } else { currentScreen='home'; }
     renderApp();
   } else {
-    pinFailCount++; const e=document.getElementById('pin-err');
-    if(e) e.textContent='PIN incorrecto. Intentos: '+pinFailCount+'/5';
+    const state=recordPinFailure(); pinFailCount=state.failCount; const e=document.getElementById('pin-err');
+    if(e) e.textContent=state.lockedUntil>Date.now()?'Demasiados intentos. Acceso bloqueado 5 minutos.':'PIN incorrecto. Intentos: '+state.failCount+'/5';
     pinBuffer=''; updatePinDots();
   }
 }
@@ -138,7 +143,7 @@ function bindSetup(){
   refreshSections();
   refreshGroup();
 
-  document.getElementById('setup-save').onclick = () => {
+  document.getElementById('setup-save').onclick = async () => {
     const teacher = document.getElementById('setup-teacher').value.trim();
     const school = document.getElementById('setup-school').value.trim();
     const cct = document.getElementById('setup-cct').value.trim();
@@ -162,9 +167,9 @@ function bindSetup(){
       section: sectionEl.value,
       group: groupEl.value,
       logo: logoData,
-      theme: 'professional',
-      pin: pin
+      theme: 'professional'
     };
+    try{ await setPinCredential(pin); }catch(e){ console.error(e); toast('No se pudo proteger el PIN en este dispositivo'); return; }
     db.group.name = db.config.group;
     db.group.level = db.config.level;
     db.group.grade = db.config.grade;
