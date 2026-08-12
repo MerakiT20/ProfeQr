@@ -1,5 +1,6 @@
 /* --- RC Core 4: local security --- */
 const PIN_SECURITY_KEY = 'profeqr_pin_security_v1';
+const PIN_KDF_ITERATIONS = 120000;
 
 function hasPinCredential(){
   return !!(db?.config && (db.config.pinHash || db.config.pin));
@@ -24,19 +25,21 @@ function recordPinFailure(){
   return state;
 }
 function bytesToHex(bytes){ return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''); }
+function hexToBytes(hex=''){ const clean=String(hex); const out=new Uint8Array(clean.length/2); for(let i=0;i<out.length;i++) out[i]=parseInt(clean.slice(i*2,i*2+2),16); return out; }
 function randomHex(bytes=16){ const a=new Uint8Array(bytes); crypto.getRandomValues(a); return bytesToHex(a); }
-async function sha256Hex(text){
-  if(!crypto?.subtle) throw new Error('Web Crypto no disponible');
-  const data=new TextEncoder().encode(String(text));
-  const digest=await crypto.subtle.digest('SHA-256',data);
-  return bytesToHex(new Uint8Array(digest));
+async function derivePinHash(pin,saltHex,iterations=PIN_KDF_ITERATIONS){
+  if(!globalThis.crypto?.subtle) throw new Error('Web Crypto no disponible');
+  const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(String(pin)),'PBKDF2',false,['deriveBits']);
+  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:hexToBytes(saltHex),iterations:Number(iterations)||PIN_KDF_ITERATIONS,hash:'SHA-256'},material,256);
+  return bytesToHex(new Uint8Array(bits));
 }
 async function setPinCredential(pin){
   if(!/^\d{4}$/.test(String(pin||''))) throw new Error('PIN inválido');
   db.config=db.config||{};
   const salt=randomHex(16);
   db.config.pinSalt=salt;
-  db.config.pinHash=await sha256Hex(`${salt}:${pin}`);
+  db.config.pinIterations=PIN_KDF_ITERATIONS;
+  db.config.pinHash=await derivePinHash(pin,salt,PIN_KDF_ITERATIONS);
   delete db.config.pin;
   clearPinFailures();
   return true;
@@ -44,7 +47,7 @@ async function setPinCredential(pin){
 async function verifyPinCredential(pin){
   if(!db?.config) return false;
   if(db.config.pinHash && db.config.pinSalt){
-    const hash=await sha256Hex(`${db.config.pinSalt}:${pin}`);
+    const hash=await derivePinHash(pin,db.config.pinSalt,db.config.pinIterations||PIN_KDF_ITERATIONS);
     return hash===db.config.pinHash;
   }
   // Compatibilidad solo durante migración de instalaciones antiguas.
