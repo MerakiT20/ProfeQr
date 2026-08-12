@@ -1,0 +1,49 @@
+name: ProfeQr Release Candidate Tests
+on:
+  push:
+    branches:
+      - main
+      - agent/rc-core-10-tests
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rc-core-10:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Static syntax checks
+        run: |
+          for f in js/*.js sw.js tests/*.mjs; do node --check "$f"; done
+      - name: Verify critical release assets
+        run: |
+          test -f vendor/pdfjs/pdf.mjs
+          test -f vendor/pdfjs/pdf.worker.mjs
+          test -f vendor/html5-qrcode.min.js
+          test -f vendor/jspdf.umd.min.js
+          grep -q "PROFEQR_BACKUP_VERSION=2" js/backup.js
+          grep -q "PBKDF2" js/security.js
+          grep -q "mergeImportedStudents" js/students.js
+          grep -q "renderPdfInsideApp" js/documents.js
+          ! grep -q '<iframe src="${documentsObjectUrl}"' js/documents.js
+      - name: Start local ProfeQr server
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 > /tmp/profeqr-server.log 2>&1 &
+          echo $! > /tmp/profeqr-server.pid
+          for i in {1..20}; do curl -fsS http://127.0.0.1:4173/index.html >/dev/null && exit 0; sleep 1; done
+          cat /tmp/profeqr-server.log
+          exit 1
+      - name: Run browser release-candidate tests
+        run: node tests/rc-core-10.mjs
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/profeqr-server.log || true
