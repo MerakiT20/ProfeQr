@@ -1,0 +1,76 @@
+name: ProfeQr RC Core 1 Bootstrap
+
+on:
+  push:
+    branches:
+      - agent/rc-core-1-bootstrap
+    paths:
+      - '.github/workflows/rc-core-1-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply RC Core 1
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          core = Path('js/core.js')
+          s = core.read_text(encoding='utf-8')
+          old = """let db;\ntry{\n  db = safeDb(JSON.parse(localStorage.getItem(KEY)) || emptyDb());\n}catch(e){\n  db = emptyDb();\n}\n"""
+          new = """// La base se hidrata al final del arranque, cuando todos los normalizadores\n// de los módulos ya fueron definidos. Esto evita dependencias de orden de carga.\nlet db = emptyDb();\nlet dbHydrated = false;\nfunction hydrateDb(){\n  if(dbHydrated) return db;\n  try{\n    db = safeDb(JSON.parse(localStorage.getItem(KEY)) || emptyDb());\n  }catch(e){\n    console.error('hydrateDb error:', e);\n    db = emptyDb();\n  }\n  dbHydrated = true;\n  return db;\n}\n"""
+          if old not in s:
+              raise SystemExit('core init block not found')
+          core.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          docs = Path('js/bitacora-docs.js')
+          s = docs.read_text(encoding='utf-8')
+          old = "document.addEventListener('DOMContentLoaded', initApp); // v4: con PIN\n"
+          if old not in s:
+              raise SystemExit('legacy init listener not found')
+          docs.write_text(s.replace(old, '', 1), encoding='utf-8')
+
+          Path('js/bootstrap.js').write_text("""// RC Core 1: punto único de inicialización.\n// Debe cargarse después de todos los módulos funcionales.\nlet appBootstrapped = false;\nfunction bootstrapProfeQr(){\n  if(appBootstrapped) return;\n  appBootstrapped = true;\n  hydrateDb();\n  initApp();\n}\n\nif(document.readyState === 'loading'){\n  document.addEventListener('DOMContentLoaded', bootstrapProfeQr, {once:true});\n} else {\n  bootstrapProfeQr();\n}\n""", encoding='utf-8')
+
+          index = Path('index.html')
+          s = index.read_text(encoding='utf-8')
+          needle = '<script src="./js/bitacora-docs.js"></script>\n'
+          if needle not in s:
+              raise SystemExit('bitacora-docs script tag not found')
+          index.write_text(s.replace(needle, needle + '<script src="./js/bootstrap.js"></script>\n', 1), encoding='utf-8')
+
+          sw = Path('sw.js')
+          s = sw.read_text(encoding='utf-8')
+          needle = '  "./js/bitacora-docs.js"\n'
+          if needle not in s:
+              raise SystemExit('service worker module list not found')
+          s = s.replace(needle, '  "./js/bitacora-docs.js",\n  "./js/bootstrap.js"\n', 1)
+          s = s.replace("const CACHE_VERSION = 'profeqr-v8-7-modular-1';", "const CACHE_VERSION = 'profeqr-v8-7-rc-core-1';", 1)
+          sw.write_text(s, encoding='utf-8')
+
+          Path('.github/workflows/rc-core-1-bootstrap.yml').unlink()
+          PY
+      - name: Validate syntax and boot order
+        shell: bash
+        run: |
+          set -e
+          for f in js/*.js sw.js; do node --check "$f"; done
+          grep -q './js/bootstrap.js' index.html
+          grep -q './js/bootstrap.js' sw.js
+          ! grep -q "DOMContentLoaded', initApp" js/bitacora-docs.js
+          grep -q 'function hydrateDb' js/core.js
+      - name: Commit RC Core 1
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix modular bootstrap order"
+          git push origin HEAD:agent/rc-core-1-bootstrap
