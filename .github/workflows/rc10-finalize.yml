@@ -1,0 +1,46 @@
+name: ProfeQr RC10 Finalize
+on:
+  push:
+    branches: [agent/rc-core-10-tests]
+    paths: ['.github/workflows/rc10-finalize.yml']
+permissions:
+  contents: write
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Fix browser-context close assertion
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/rc-core-10.mjs')
+          s=p.read_text()
+          old='  closeStoredDocumentViewer();\n});\n\nawait test(\'Bitacora closed-report protection primitives are present\''
+          new='  await page.evaluate(()=>closeStoredDocumentViewer());\n});\n\nawait test(\'Bitacora closed-report protection primitives are present\''
+          if old not in s: raise SystemExit('test close anchor missing')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Run full Core 10 suite
+        run: |
+          for f in js/*.js sw.js tests/*.mjs; do node --check "$f"; done
+          python3 -m http.server 4173 --bind 127.0.0.1 > /tmp/profeqr-server.log 2>&1 &
+          for i in {1..20}; do curl -fsS http://127.0.0.1:4173/index.html >/dev/null && break; sleep 1; done
+          node tests/rc-core-10.mjs
+      - name: Commit passing Core 10
+        run: |
+          rm -f .github/workflows/rc10-finalize.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Finalize passing Release Candidate Core 10 suite'
+          git push
