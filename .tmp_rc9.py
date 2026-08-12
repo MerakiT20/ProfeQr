@@ -56,11 +56,11 @@ repl('js/settings.js', "toast(result.legacy?'Respaldo JSON antiguo restaurado':'
 # Service worker: cache module and bump version.
 p=Path('sw.js'); s=p.read_text(encoding='utf-8')
 import re
-s=re.sub(r"const CACHE = '([^']+)'", lambda m: "const CACHE = 'profeqr-rc9-documents-v1'", s, count=1)
-if "'./js/documents.js'" not in s:
-    anchor="'./js/security.js',"
+s=re.sub(r"const CACHE_VERSION = '[^']+'", "const CACHE_VERSION = 'profeqr-rc9-documents-v1'", s, count=1)
+if '"./js/documents.js"' not in s:
+    anchor='  "./js/security.js",'
     if anchor not in s: raise SystemExit('sw anchor missing')
-    s=s.replace(anchor, anchor+"\n  './js/documents.js',",1)
+    s=s.replace(anchor, anchor+'\n  "./js/documents.js",',1)
 p.write_text(s,encoding='utf-8')
 
 # Minimal modal styling.
