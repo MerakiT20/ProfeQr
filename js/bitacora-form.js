@@ -41,7 +41,7 @@ function validateBitStep(){
   if(t==='CIT'){ if(s===0&&!d.cit_student) return toast('Selecciona alumno'),false; if(s===1&&!d.cit_tutor) return toast('Captura tutor'),false; if(s===2&&(!d.cit_date||!d.cit_time||!d.cit_place)) return toast('Completa fecha, hora y lugar'),false; if(s===3&&(!d.cit_reason||!d.cit_detail)) return toast('Captura motivo y detalle'),false; if(s===4&&!d.cit_medium) return toast('Selecciona medio de entrega'),false; }
   return true;
 }
-function prepareBitPreview(){ collectBitStep(); refreshBitacoraComputedFields(bitacoraDraft); bitacoraDraft.documentText=buildBitacoraDocument(bitacoraDraft); currentScreen='bitacoraPreview'; renderCurrentScreen(); }
+function prepareBitPreview(){ collectBitStep(); if(bitacoraDraft.status==='borrador') bitacoraDraft.status=bitacoraOperationalStatus(bitacoraDraft); refreshBitacoraComputedFields(bitacoraDraft); bitacoraDraft.documentText=buildBitacoraDocument(bitacoraDraft); currentScreen='bitacoraPreview'; renderCurrentScreen(); }
 function valOf(id){ return (document.getElementById(id)?.value||'').trim(); }
 function instHeader(report=null){ const i=report?.institutional||buildBitacoraInstitutionalSnapshot(); return `Escuela: ${i.school||''}\nCCT: ${i.cct||''} · Grupo: ${i.group||''} · Turno: ${i.shift||''} · Ciclo: ${i.cycle||''}\nDocente que registra: ${i.teacher||''}\nDirector(a) o responsable: ${i.director||''}\nZona: ${i.zone||''} · Sector/Jefatura: ${i.sector||''}\nMunicipio: ${i.municipality||''}\nDomicilio: ${i.address||''}`; }
 function bitNA(v, fallback='No se registró al momento de elaboración.'){

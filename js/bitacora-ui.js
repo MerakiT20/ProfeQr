@@ -101,14 +101,31 @@ function bindBitacora(){
   const sel=document.getElementById('bit-student-filter'); if(sel) sel.onchange=()=>{ const detail=document.getElementById('bit-student-detail'); detail.innerHTML=sel.value?renderBitacoraStudentCard(sel.value):'Selecciona un alumno para ver su ficha integral de bitácora.'; bindBitacora(); };
 }
 function changeBitacoraStatus(id,status){
+  if(!canWrite()) return writeBlockedMessage();
   const r=(db.group.bitacoraReports||[]).find(x=>x.id===id); if(!r) return;
-  r.status=status; refreshBitacoraComputedFields(r); saveDb(); toast(status==='cerrado'?'Reporte cerrado':'Reporte reabierto'); renderCurrentScreen();
+  const now=new Date().toISOString();
+  if(status==='cerrado'){
+    if(buildReportStatus(r)==='cerrado') return toast('El reporte ya está cerrado');
+    if(!confirm('Al cerrar se conservará una versión inmutable. Para modificar después tendrás que reabrir y quedará registro. ¿Cerrar?')) return;
+    if(!r.documentText) r.documentText=buildBitacoraDocument(r);
+    r.status='cerrado'; r.closedAt=now; r.updatedAt=now; r.trafficLight='verde';
+    appendBitacoraVersion(r,'cierre'); appendBitacoraAudit(r,'cerrado','Versión final preservada');
+    if(!saveDb()) return; toast('Reporte cerrado y versión preservada'); renderCurrentScreen(); return;
+  }
+  if(status==='en seguimiento'){
+    if(buildReportStatus(r)!=='cerrado') return toast('El reporte no está cerrado');
+    if(!confirm('Reabrir iniciará una nueva revisión y conservará intacta la versión cerrada. ¿Reabrir?')) return;
+    r.revision=(Number(r.revision)||1)+1; r.status='en seguimiento'; r.reopenedAt=now; r.closedAt=''; r.updatedAt=now; r.trafficLight=buildReportTrafficLight(r);
+    appendBitacoraAudit(r,'reabierto','Nueva revisión iniciada');
+    if(!saveDb()) return; toast('Reporte reabierto como nueva revisión'); renderCurrentScreen();
+  }
 }
 function startBitacora(type){
   if(!canWrite()) return writeBlockedMessage();
   if(type!=='CIT' && getActiveStudents().length===0){ toast('Primero agrega alumnos al grupo'); currentScreen='students'; renderCurrentScreen(); return; }
   bitacoraStep=0;
-  bitacoraDraft={id:uid(),schemaVersion:2,folio:bitacoraFolio(),type,route:type,status:'abierto',trafficLight:'amarillo',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),date:today(),time:nowTime().slice(0,5),eventDate:today(),eventTime:nowTime().slice(0,5),institutional:buildBitacoraInstitutionalSnapshot(),reporter:{name:db.config?.teacher||'',role:'docente',source:'observación directa'},studentIds:[],data:{},followUp:{date:'',responsible:db.config?.teacher||'',notes:''},documentText:''};
+  const createdAt=new Date().toISOString();
+  bitacoraDraft={id:uid(),schemaVersion:3,folio:bitacoraFolio(),type,route:type,status:'borrador',trafficLight:'gris',revision:1,versions:[],auditTrail:[{at:createdAt,action:'creado',detail:'Borrador iniciado',revision:1}],closedAt:'',reopenedAt:'',createdAt,updatedAt:createdAt,date:today(),time:nowTime().slice(0,5),eventDate:today(),eventTime:nowTime().slice(0,5),institutional:buildBitacoraInstitutionalSnapshot(),reporter:{name:db.config?.teacher||'',role:'docente',source:'observación directa'},studentIds:[],data:{},followUp:{date:'',responsible:db.config?.teacher||'',notes:''},documentText:''};
   currentScreen='bitacoraForm'; renderCurrentScreen();
 }
 function continuarDraft(){ if(wizDraftLoad()){ currentScreen='bitacoraForm'; renderCurrentScreen(); } }

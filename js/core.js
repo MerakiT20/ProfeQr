@@ -274,21 +274,34 @@ function buildReportTrafficLight(report){
   if(severeA||severeC||status==='canalizado'||overdue||recurrent) return 'rojo';
   return 'amarillo';
 }
+function cloneBitacoraValue(value){ try{ return JSON.parse(JSON.stringify(value)); }catch(e){ return value; } }
+function bitacoraOperationalStatus(report){
+  const r=report||{}, d=r.data||{};
+  const candidate=r.type==='A'?d.a_status:r.type==='B'?d.b_status:r.type==='C'?d.c_status:'';
+  return ['abierto','en seguimiento','canalizado','cerrado'].includes(candidate) ? candidate : 'abierto';
+}
+function bitacoraVersionSnapshot(report, reason='versión'){
+  const r=report||{};
+  return {revision:Number(r.revision)||1,reason,capturedAt:new Date().toISOString(),status:buildReportStatus(r),closedAt:r.closedAt||'',updatedAt:r.updatedAt||'',date:r.date||'',time:r.time||'',eventDate:r.eventDate||'',eventTime:r.eventTime||'',studentIds:cloneBitacoraValue(r.studentIds||[]),institutional:cloneBitacoraValue(r.institutional||{}),reporter:cloneBitacoraValue(r.reporter||{}),data:cloneBitacoraValue(r.data||{}),followUp:cloneBitacoraValue(r.followUp||{}),documentText:String(r.documentText||'')};
+}
+function appendBitacoraVersion(report, reason='versión'){ if(!report) return report; report.versions=Array.isArray(report.versions)?report.versions:[]; report.versions.push(bitacoraVersionSnapshot(report,reason)); return report; }
+function appendBitacoraAudit(report, action, detail=''){ if(!report) return report; report.auditTrail=Array.isArray(report.auditTrail)?report.auditTrail:[]; report.auditTrail.push({at:new Date().toISOString(),action,detail,revision:Number(report.revision)||1}); return report; }
 function normalizeBitacoraReport(report){
   const r=report&&typeof report==='object'?{...report}:{};
-  r.id=r.id||uid(); r.schemaVersion=Number(r.schemaVersion)||1; r.type=r.type||r.route||'A'; r.route=r.route||r.type;
+  r.id=r.id||uid(); r.schemaVersion=Math.max(Number(r.schemaVersion)||1,3); r.type=r.type||r.route||'A'; r.route=r.route||r.type;
   r.folio=r.folio||`BPF-${new Date().getFullYear()}-${String(extractBitacoraFolioSeq(r)||1).padStart(4,'0')}`;
   r.createdAt=r.createdAt||new Date().toISOString(); r.updatedAt=r.updatedAt||r.createdAt; r.date=r.date||today(); r.time=r.time||nowTime().slice(0,5);
   r.eventDate=r.eventDate||r.date; r.eventTime=r.eventTime||r.time; r.institutional=r.institutional||buildBitacoraInstitutionalSnapshot();
   r.reporter=r.reporter||{name:(((typeof db !== 'undefined' && db) ? db.config : null)?.teacher||''),role:'docente',source:'observación directa'};
   r.studentIds=Array.isArray(r.studentIds)?r.studentIds.filter(Boolean):[]; r.data=(r.data&&typeof r.data==='object')?r.data:{};
+  r.revision=Math.max(Number(r.revision)||1,1); r.versions=Array.isArray(r.versions)?r.versions:[]; r.auditTrail=Array.isArray(r.auditTrail)?r.auditTrail:[]; r.closedAt=r.closedAt||''; r.reopenedAt=r.reopenedAt||'';
   r.status=buildReportStatus(r); r.trafficLight=buildReportTrafficLight(r);
   r.followUp=r.followUp||{date:getBitacoraFollowUpDate(r),responsible:(((typeof db !== 'undefined' && db) ? db.config : null)?.teacher||''),notes:''}; r.documentText=r.documentText||'';
   return r;
 }
 function refreshBitacoraComputedFields(report){
   if(!report) return report;
-  report.updatedAt=new Date().toISOString(); report.institutional=report.institutional||buildBitacoraInstitutionalSnapshot();
+  if(buildReportStatus(report)!=='cerrado') report.updatedAt=new Date().toISOString(); report.institutional=report.institutional||buildBitacoraInstitutionalSnapshot();
   report.reporter=report.reporter||{name:db.config?.teacher||'',role:'docente',source:'observación directa'};
   report.eventDate=report.eventDate||report.date||today(); report.eventTime=report.eventTime||report.time||nowTime().slice(0,5);
   report.status=buildReportStatus(report); report.trafficLight=buildReportTrafficLight(report);

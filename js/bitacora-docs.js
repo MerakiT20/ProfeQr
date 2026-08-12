@@ -167,69 +167,36 @@ function buildBitacoraDocument(r){
 }
 function renderBitacoraPreview(){
   if(!bitacoraDraft) return '<div class="card"><div class="section-title">Sin borrador</div></div>';
-  const d = bitacoraDraft.data || {};
-  const checks = [
-    'Encabezado institucional completo',
-    'Datos de identificación y folio',
-    'Alumno(s) ligados por studentId',
-    'Hechos observados y/o referidos separados',
-    'Evidencias y anexos descritos',
-    'Acciones, notificaciones y seguimiento',
-    'Nota de privacidad y alcance',
-    'Firmas requeridas'
-  ];
-  const routeAlert = bitacoraDraft.type==='A' && Array.isArray(d.riskFlags) && d.riskFlags.length
-    ? `<div class="alert-danger"><b>Revisión especial Ruta A</b><p>Hay indicadores de riesgo marcados. Verifica medidas de protección, notificación y canalización antes de guardar.</p></div>`
-    : '';
-  return `<div class="card"><div class="section-title">Vista previa obligatoria</div>
-    <div class="help">Revisa y edita el acta final antes de guardar. El documento incluye estructura institucional, privacidad, alcance y firmas.</div>
-    ${routeAlert}
-    <div class="preview-checklist">${checks.map(c=>`<label><input type="checkbox" checked disabled> ${esc(c)}</label>`).join('')}</div>
-    <textarea id="bit-preview-text" style="min-height:520px;margin-top:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;line-height:1.5">${esc(bitacoraDraft.documentText||'')}</textarea>
-    <label style="display:flex;gap:8px;margin-top:12px"><input type="checkbox" id="bit-validate"> Confirmo que revisé el documento y que corresponde a la información capturada.</label>
-    <div class="row row3" style="margin-top:12px">
-      <button class="btn secondary" id="bit-edit">Regresar a editar</button>
-      <button class="btn ghost" id="bit-refresh-doc">Reconstruir acta</button>
-      <button class="btn primary" id="bit-save">Guardar</button>
-      <button class="btn ok" id="bit-save-pdf">Guardar + PDF</button>
-      <button class="btn warn" id="bit-save-word">Guardar + Word</button>
-    </div>
-  </div>`;
+  const d=bitacoraDraft.data||{}, isClosed=buildReportStatus(bitacoraDraft)==='cerrado';
+  const checks=['Encabezado institucional completo','Datos de identificación y folio','Alumno(s) ligados por studentId','Hechos observados y/o referidos separados','Evidencias y anexos descritos','Acciones, notificaciones y seguimiento','Nota de privacidad y alcance','Firmas requeridas'];
+  const routeAlert=bitacoraDraft.type==='A'&&Array.isArray(d.riskFlags)&&d.riskFlags.length?`<div class="alert-danger"><b>Revisión especial Ruta A</b><p>Hay indicadores de riesgo marcados. Verifica medidas de protección, notificación y canalización antes de guardar.</p></div>`:'';
+  const integrity=`<div class="help"><b>Revisión ${Number(bitacoraDraft.revision)||1}</b> · Versiones preservadas: ${(bitacoraDraft.versions||[]).length} · Creado: ${esc((bitacoraDraft.createdAt||'').slice(0,16).replace('T',' '))}${isClosed?` · Cerrado: ${esc((bitacoraDraft.closedAt||'').slice(0,16).replace('T',' '))}`:''}</div>`;
+  return `<div class="card"><div class="section-title">${isClosed?'Acta cerrada · solo lectura':'Vista previa obligatoria'}</div><div class="help">${isClosed?'Este cierre está protegido. Reabre el reporte desde el historial para iniciar una nueva revisión sin alterar esta versión.':'Revisa y edita el acta final antes de guardar.'}</div>${integrity}${routeAlert}<div class="preview-checklist">${checks.map(c=>`<label><input type="checkbox" checked disabled> ${esc(c)}</label>`).join('')}</div><textarea id="bit-preview-text" ${isClosed?'readonly':''} style="min-height:520px;margin-top:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;line-height:1.5">${esc(bitacoraDraft.documentText||'')}</textarea>${isClosed?'<div class="row row2" style="margin-top:12px"><button class="btn secondary" id="bit-closed-back">Volver al historial</button></div>':`<label style="display:flex;gap:8px;margin-top:12px"><input type="checkbox" id="bit-validate"> Confirmo que revisé el documento y que corresponde a la información capturada.</label><div class="row row3" style="margin-top:12px"><button class="btn secondary" id="bit-edit">Regresar a editar</button><button class="btn ghost" id="bit-refresh-doc">Reconstruir acta</button><button class="btn primary" id="bit-save">Guardar</button><button class="btn ok" id="bit-save-pdf">Guardar + PDF</button><button class="btn warn" id="bit-save-word">Guardar + Word</button></div>`}</div>`;
 }
 function bindBitacoraPreview(){
+  if(!bitacoraDraft) return;
+  if(buildReportStatus(bitacoraDraft)==='cerrado'){
+    const back=document.getElementById('bit-closed-back'); if(back) back.onclick=()=>{ bitacoraDraft=null; currentScreen='bitacora'; renderCurrentScreen(); }; return;
+  }
   document.getElementById('bit-edit').onclick=()=>{ currentScreen='bitacoraForm'; renderCurrentScreen(); };
-  const refresh = document.getElementById('bit-refresh-doc');
-  if(refresh) refresh.onclick=()=>{
-    if(!confirm('Esto reconstruirá el acta con los datos estructurados y reemplazará las ediciones manuales de esta vista previa. ¿Continuar?')) return;
-    bitacoraDraft.documentText = buildBitacoraDocument(bitacoraDraft);
-    document.getElementById('bit-preview-text').value = bitacoraDraft.documentText;
-    toast('Acta reconstruida');
-  };
-  const doSave=(format)=>{
-    if(!document.getElementById('bit-validate').checked) return toast('Marca la validación final');
-    bitacoraDraft.documentText=document.getElementById('bit-preview-text').value;
-    saveBitacoraDraft(format);
-  };
-  document.getElementById('bit-save').onclick=()=>doSave('none');
-  document.getElementById('bit-save-pdf').onclick=()=>doSave('pdf');
-  document.getElementById('bit-save-word').onclick=()=>doSave('word');
+  const refresh=document.getElementById('bit-refresh-doc'); if(refresh) refresh.onclick=()=>{ if(!confirm('Esto reconstruirá el acta y reemplazará las ediciones manuales. ¿Continuar?')) return; bitacoraDraft.documentText=buildBitacoraDocument(bitacoraDraft); document.getElementById('bit-preview-text').value=bitacoraDraft.documentText; toast('Acta reconstruida'); };
+  const doSave=(format)=>{ if(!canWrite()) return writeBlockedMessage(); if(!document.getElementById('bit-validate').checked) return toast('Marca la validación final'); bitacoraDraft.documentText=document.getElementById('bit-preview-text').value; saveBitacoraDraft(format); };
+  document.getElementById('bit-save').onclick=()=>doSave('none'); document.getElementById('bit-save-pdf').onclick=()=>doSave('pdf'); document.getElementById('bit-save-word').onclick=()=>doSave('word');
 }
 function saveBitacoraDraft(format='none'){
-  refreshBitacoraComputedFields(bitacoraDraft);
-  db.group.bitacoraReports=db.group.bitacoraReports||[];
-  const idx=db.group.bitacoraReports.findIndex(r=>r.id===bitacoraDraft.id);
-  if(idx>=0) db.group.bitacoraReports[idx]={...bitacoraDraft}; else db.group.bitacoraReports.unshift({...bitacoraDraft});
-  if(!saveDb()) return;
-  const saved={...bitacoraDraft};
-  wizDraftClear(); // FIX: limpiar draft al guardar
-  bitacoraDraft=null;
-  toast('Bitácora guardada');
-  if(format==='pdf') downloadBitacoraPdf(saved);
-  if(format==='word') downloadBitacoraWord(saved);
-  currentScreen='bitacora';
-  renderCurrentScreen();
+  if(!canWrite()) return writeBlockedMessage();
+  db.group.bitacoraReports=db.group.bitacoraReports||[]; const idx=db.group.bitacoraReports.findIndex(r=>r.id===bitacoraDraft.id);
+  if(idx>=0){
+    const existing=normalizeBitacoraReport(db.group.bitacoraReports[idx]);
+    if(buildReportStatus(existing)==='cerrado') return toast('El acta está cerrada. Reábrela antes de modificarla.');
+    appendBitacoraVersion(existing,'antes de edición'); bitacoraDraft.versions=existing.versions; bitacoraDraft.auditTrail=existing.auditTrail;
+  }
+  if(bitacoraDraft.status==='borrador') bitacoraDraft.status=bitacoraOperationalStatus(bitacoraDraft);
+  refreshBitacoraComputedFields(bitacoraDraft); appendBitacoraAudit(bitacoraDraft,idx>=0?'actualizado':'guardado',idx>=0?'Cambios guardados en la revisión actual':'Primer guardado final');
+  if(idx>=0) db.group.bitacoraReports[idx]=cloneBitacoraValue(bitacoraDraft); else db.group.bitacoraReports.unshift(cloneBitacoraValue(bitacoraDraft));
+  if(!saveDb()) return; const saved=cloneBitacoraValue(bitacoraDraft); wizDraftClear(); bitacoraDraft=null; toast('Bitácora guardada'); if(format==='pdf') downloadBitacoraPdf(saved); if(format==='word') downloadBitacoraWord(saved); currentScreen='bitacora'; renderCurrentScreen();
 }
-function openBitacoraReport(id){ const r=(db.group.bitacoraReports||[]).find(x=>x.id===id); if(!r) return; bitacoraDraft={...normalizeBitacoraReport(r),data:{...(r.data||{})}}; bitacoraStep=(BIT_STEPS[r.type]||[]).length-1; currentScreen='bitacoraPreview'; renderCurrentScreen(); }
+function openBitacoraReport(id){ const r=(db.group.bitacoraReports||[]).find(x=>x.id===id); if(!r) return; bitacoraDraft=cloneBitacoraValue(normalizeBitacoraReport(r)); bitacoraStep=(BIT_STEPS[r.type]||[]).length-1; currentScreen='bitacoraPreview'; renderCurrentScreen(); }
 function downloadBitacoraPdf(r){
   if(!r) return;
   const text=r.documentText||buildBitacoraDocument(r);

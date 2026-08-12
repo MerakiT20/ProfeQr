@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-v8-7-rc-core-1';
+const CACHE_VERSION = 'profeqr-v8-7-rc-core-3';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
