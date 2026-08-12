@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-v8-7-modular-1';
+const CACHE_VERSION = 'profeqr-v8-7-rc-core-1';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
@@ -25,7 +25,8 @@ const CORE = [
   "./js/bitacora-core.js",
   "./js/bitacora-ui.js",
   "./js/bitacora-form.js",
-  "./js/bitacora-docs.js"
+  "./js/bitacora-docs.js",
+  "./js/bootstrap.js"
 ];
 const CDN_LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',

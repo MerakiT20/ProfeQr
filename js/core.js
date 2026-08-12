@@ -137,11 +137,20 @@ function safeDb(raw){
   return db;
 }
 
-let db;
-try{
-  db = safeDb(JSON.parse(localStorage.getItem(KEY)) || emptyDb());
-}catch(e){
-  db = emptyDb();
+// La base se hidrata al final del arranque, cuando todos los normalizadores
+// de los módulos ya fueron definidos. Esto evita dependencias de orden de carga.
+let db = emptyDb();
+let dbHydrated = false;
+function hydrateDb(){
+  if(dbHydrated) return db;
+  try{
+    db = safeDb(JSON.parse(localStorage.getItem(KEY)) || emptyDb());
+  }catch(e){
+    console.error('hydrateDb error:', e);
+    db = emptyDb();
+  }
+  dbHydrated = true;
+  return db;
 }
 
 function saveDb(){
