@@ -1,0 +1,44 @@
+name: Harden ProfeQr RC Core 6
+on:
+  push:
+    branches: [agent/rc-core-6-licensing]
+    paths:
+      - '.github/workflows/rc-core-6-hardening.yml'
+permissions:
+  contents: write
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restrict activation identity writes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('js/license.js'); s=p.read_text()
+          needle="function licenseStatusLabel(){"
+          helper="function canEditUnlicensedIdentity(){\n  if(licenseRuntime.mode!=='none' || licenseRuntime.reason!=='missing') return false;\n  const g=db?.group||{};\n  return !(g.students||[]).length && !(g.works||[]).length && !Object.keys(g.attendance||{}).length && !(g.bitacoraReports||[]).length;\n}\n"
+          if helper not in s:
+              if needle not in s: raise SystemExit('license helper anchor missing')
+              s=s.replace(needle,helper+needle,1)
+          p.write_text(s)
+
+          p=Path('js/settings.js'); s=p.read_text()
+          old="    if(!saveDb({system:true})) return;\n    refreshLicenseRuntime().then(()=>{ toast('Ajustes guardados'); renderApp(); });"
+          new="    const identityBootstrap=canEditUnlicensedIdentity();\n    if(!saveDb({system:identityBootstrap})) return;\n    refreshLicenseRuntime().then(()=>{ toast('Ajustes guardados'); renderApp(); });"
+          if old not in s: raise SystemExit('settings save anchor missing')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Validate
+        run: |
+          for f in js/*.js sw.js; do node --check "$f"; done
+          grep -q 'canEditUnlicensedIdentity' js/license.js
+          grep -q 'system:identityBootstrap' js/settings.js
+      - name: Commit hardening
+        run: |
+          rm -f .github/workflows/rc-core-6-hardening.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Restrict unlicensed identity changes to empty installs' || exit 0
+          git push
