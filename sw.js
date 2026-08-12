@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-v8-7-rc-core-6';
+const CACHE_VERSION = 'profeqr-v8-7-rc-core-8';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
@@ -23,6 +23,12 @@ const CORE = [
   "./js/works.js",
   "./js/cards.js",
   "./js/reports.js",
+  "./vendor/html5-qrcode.min.js",
+  "./vendor/qrcode.min.js",
+  "./vendor/chart.umd.min.js",
+  "./vendor/xlsx.bundle.min.js",
+  "./vendor/jspdf.umd.min.js",
+  "./js/backup.js",
   "./js/settings.js",
   "./js/bitacora-core.js",
   "./js/bitacora-ui.js",

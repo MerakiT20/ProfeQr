@@ -62,13 +62,13 @@ function renderSettings(){
     </div>
   </div>
   <div class="card">
-    <div class="section-title">Respaldo JSON</div>
-    <div class="help">El respaldo JSON guarda una copia completa de la información de la app para restaurarla después en este u otro dispositivo.</div>
+    <div class="section-title">Respaldo integral</div>
+    <div class="help">El archivo .profeqr guarda la base de datos y borradores con verificación de integridad. La licencia y la identidad del dispositivo no se clonan.</div>
     <div class="row row2" style="margin-top:10px">
-      <button class="btn secondary" id="export-json-btn">Exportar respaldo JSON</button>
+      <button class="btn secondary" id="export-json-btn">Exportar respaldo .profeqr</button>
       <label class="btn primary" style="display:grid;place-items:center">
-        <input style="display:none" type="file" id="import-json-input" accept=".json,application/json">
-        Importar respaldo JSON
+        <input style="display:none" type="file" id="import-json-input" accept=".profeqr,.json,application/json">
+        Importar respaldo
       </label>
     </div>
   </div>`;
@@ -177,36 +177,19 @@ function bindSettings(){
     refreshLicenseRuntime().then(()=>{ toast('Ajustes guardados'); renderApp(); });
   };
 
-  document.getElementById('export-json-btn').onclick = ()=>{
-    const blob = new Blob([JSON.stringify(sanitizedBackupDb(),null,2)],{type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `respaldo_profeqr_${today()}.json`;
-    a.click();
-    toast('Respaldo exportado');
-  };
+  document.getElementById('export-json-btn').onclick = ()=>exportProfeQrBackup();
 
   const importInput = document.getElementById('import-json-input');
-  importInput.onchange = e => {
-    const file = e.target.files[0];
-    if(!file) return;
-    const ok = confirm('⚠️ Esto reemplazará TODOS los datos actuales con el respaldo. Esta acción no se puede deshacer. ¿Continuar?');
-    if(!ok){ importInput.value = ''; return; }
-    const r = new FileReader();
-    r.onload = async ()=> {
-      try{
-        if(!canWrite()) return writeBlockedMessage();
-        db = safeDb(JSON.parse(r.result));
-        try{ await migrateLegacyPinSecurity(); }catch(e){ console.error('PIN import migration error:',e); }
-        if(!saveDb()) return;
-        toast('Respaldo importado');
-        renderApp();
-      }catch(err){
-        console.error(err);
-        toast('JSON inválido o corrupto');
-      }
-    };
-    r.readAsText(file);
+  importInput.onchange = async e => {
+    const file=e.target.files?.[0]; if(!file) return;
+    const ok=confirm('⚠️ Esto reemplazará los datos actuales. La licencia de este dispositivo se conservará. ¿Continuar?');
+    if(!ok){ importInput.value=''; return; }
+    try{
+      const result=await importProfeQrBackupFile(file);
+      toast(result.legacy?'Respaldo JSON antiguo restaurado':'Respaldo integral restaurado');
+      renderApp();
+    }catch(err){ console.error(err); toast(err?.message||'No se pudo restaurar el respaldo'); }
+    finally{ importInput.value=''; }
   };
 }
 
