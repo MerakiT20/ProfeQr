@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-v8-7-rc10-pdfjs-compat';
+const CACHE_VERSION = 'profeqr-v8-7-attention-center';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
@@ -37,6 +37,7 @@ const CORE = [
   "./js/bitacora-ui.js",
   "./js/bitacora-form.js",
   "./js/bitacora-docs.js",
+  "./js/attention.js",
   "./js/bootstrap.js"
 ];
 const CDN_LIBS = [
