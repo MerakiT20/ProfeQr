@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-v8-7-rc-core-4-5';
+const CACHE_VERSION = 'profeqr-v8-7-rc-core-6';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
@@ -11,6 +11,7 @@ const CORE = [
   "./icons/icon-512-maskable.png",
   "./js/core.js",
   "./js/security.js",
+  "./js/license.js",
   "./js/shell.js",
   "./js/profiles.js",
   "./js/agenda.js",

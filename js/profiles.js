@@ -70,7 +70,7 @@ function renderCurrentScreen(){
   const host = document.getElementById('screen-host');
   let html = '';
   if(isExpired()){
-    html += `<div class="expired-banner">La licencia de este ciclo venció el 30 de julio de 2027. Puedes consultar y exportar información, pero ya no capturar nuevos datos.</div>`;
+    html += `<div class="expired-banner">${esc(licenseRuntime?.message || 'Activación requerida. Puedes consultar y exportar, pero no modificar datos.')}</div>`;
   }
   if(currentScreen==='home') html += renderHome();
   if(currentScreen==='agenda') html += renderAgenda();

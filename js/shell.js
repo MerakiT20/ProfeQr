@@ -167,7 +167,8 @@ function bindSetup(){
       section: sectionEl.value,
       group: groupEl.value,
       logo: logoData,
-      theme: 'professional'
+      theme: 'professional',
+      licenseLegacyGrandfathered: false
     };
     try{ await setPinCredential(pin); }catch(e){ console.error(e); toast('No se pudo proteger el PIN en este dispositivo'); return; }
     db.group.name = db.config.group;
@@ -175,8 +176,9 @@ function bindSetup(){
     db.group.grade = db.config.grade;
     db.group.shift = db.config.shift;
     db.group.section = db.config.section;
-    if(!saveDb()) return;
-    currentScreen = 'home'; // FIX v4
+    if(!saveDb({system:true})) return;
+    await refreshLicenseRuntime();
+    currentScreen = canWrite() ? 'home' : 'settings';
     renderApp();
   };
 }

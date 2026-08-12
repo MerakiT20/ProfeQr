@@ -36,6 +36,17 @@ function renderSettings(){
     </div>
   </div>
   <div class="card">
+    <div class="section-title">🔐 Licencia ProfeQr</div>
+    <div class="help">Estado: <b>${esc(licenseStatusLabel())}</b>. La licencia se vincula a esta instalación, al CCT y al ciclo escolar.</div>
+    <div class="row row2" style="margin-top:10px">
+      <div><div class="small">ID de instalación</div><input id="license-installation-id" value="${esc(getInstallationId())}" readonly></div>
+      <div><div class="small">CCT / ciclo</div><input value="${esc((db.config.cct||'')+' · '+(db.config.cycle||''))}" readonly></div>
+    </div>
+    <div class="small" style="margin-top:10px">Código de licencia firmado</div>
+    <textarea id="license-token" placeholder="PQ1..." style="min-height:110px"></textarea>
+    <div class="row row2" style="margin-top:10px"><button class="btn primary" id="activate-license-btn">Activar licencia</button><button class="btn secondary" id="copy-installation-id-btn">Copiar ID de instalación</button></div>
+  </div>
+  <div class="card">
     <div class="section-title">Paleta de colores</div>
     <div class="theme-grid">
       ${Object.entries(THEMES).map(([key,t])=>`
@@ -110,7 +121,21 @@ function bindSettings(){
     if(!saveDb()) return; toast('PIN actualizado');
     ['set-pin-actual','set-pin-nuevo','set-pin-confirm'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   });
-    document.querySelectorAll('[data-theme]').forEach(btn=>btn.onclick = ()=>{
+    document.getElementById('copy-installation-id-btn')?.addEventListener('click',async()=>{
+    try{ await navigator.clipboard.writeText(getInstallationId()); toast('ID de instalación copiado'); }catch(e){ toast('No se pudo copiar; selecciónalo manualmente'); }
+  });
+  document.getElementById('activate-license-btn')?.addEventListener('click',async()=>{
+    const token=document.getElementById('license-token')?.value.trim()||'';
+    if(!token){ toast('Pega el código de licencia'); return; }
+    const btn=document.getElementById('activate-license-btn'); if(btn) btn.disabled=true;
+    const result=await activateLicenseToken(token);
+    if(btn) btn.disabled=false;
+    if(!result.valid){ toast(result.message||'Licencia inválida'); return; }
+    toast('Licencia activada correctamente');
+    renderApp();
+  });
+
+  document.querySelectorAll('[data-theme]').forEach(btn=>btn.onclick = ()=>{
     db.config.theme = btn.dataset.theme;
     if(!saveDb()) return;
     applyTheme(db.config.theme);
@@ -147,9 +172,8 @@ function bindSettings(){
     db.group.shift = db.config.shift;
     db.group.section = db.config.section;
     db.group.students = db.group.students.map(s=>({...s, qr:qrCodeFor(db.config.group, s.listNo)}));
-    if(!saveDb()) return;
-    toast('Ajustes guardados');
-    renderApp();
+    if(!saveDb({system:true})) return;
+    refreshLicenseRuntime().then(()=>{ toast('Ajustes guardados'); renderApp(); });
   };
 
   document.getElementById('export-json-btn').onclick = ()=>{

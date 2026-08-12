@@ -339,10 +339,7 @@ function toast(msg){
   window.__toastTimer = setTimeout(()=>el.classList.add('hidden'),2200);
 }
 
-function licenseExpiryDate(){ return db?.config?.license?.expiresAt || LICENSE_END; }
-function isExpired(){ return !!db?.config && today() > licenseExpiryDate(); }
-function canWrite(){ return !db?.config || !isExpired(); }
-function writeBlockedMessage(){ toast(`Licencia vencida (${licenseExpiryDate()}). Puedes consultar y exportar, pero no modificar datos.`); }
+// RC Core 6: licenseExpiryDate(), isExpired(), canWrite() y writeBlockedMessage() viven en license.js.
 
 window.addEventListener('error', e => {
   console.error(e);
