@@ -93,6 +93,11 @@ async function activateLicenseToken(token){
 function licenseExpiryDate(){
   return licenseRuntime?.payload?.expiresAt || db?.config?.license?.expiresAt || (db?.config?.licenseLegacyGrandfathered ? LICENSE_END : '');
 }
+function canEditUnlicensedIdentity(){
+  if(licenseRuntime.mode!=='none' || licenseRuntime.reason!=='missing') return false;
+  const g=db?.group||{};
+  return !(g.students||[]).length && !(g.works||[]).length && !Object.keys(g.attendance||{}).length && !(g.bitacoraReports||[]).length;
+}
 function licenseStatusLabel(){
   if(!db?.config) return 'Configuración inicial';
   if(licenseRuntime.mode==='signed' && licenseRuntime.valid) return `Activa hasta ${licenseExpiryDate()}`;

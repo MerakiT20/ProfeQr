@@ -172,7 +172,8 @@ function bindSettings(){
     db.group.shift = db.config.shift;
     db.group.section = db.config.section;
     db.group.students = db.group.students.map(s=>({...s, qr:qrCodeFor(db.config.group, s.listNo)}));
-    if(!saveDb({system:true})) return;
+    const identityBootstrap=canEditUnlicensedIdentity();
+    if(!saveDb({system:identityBootstrap})) return;
     refreshLicenseRuntime().then(()=>{ toast('Ajustes guardados'); renderApp(); });
   };
 
