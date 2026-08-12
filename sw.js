@@ -1,11 +1,32 @@
-const CACHE_VERSION = 'profeqr-v4-stable-1';
+const CACHE_VERSION = 'profeqr-v8-7-modular-1';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
-  './', './index.html', './styles.css', './app.js', './manifest.json',
-  './icons/icon-192.png', './icons/icon-512.png',
-  './icons/icon-192-maskable.png', './icons/icon-512-maskable.png'
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./manifest.json",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/icon-192-maskable.png",
+  "./icons/icon-512-maskable.png",
+  "./js/core.js",
+  "./js/shell.js",
+  "./js/profiles.js",
+  "./js/agenda.js",
+  "./js/library.js",
+  "./js/cte.js",
+  "./js/guardias.js",
+  "./js/students.js",
+  "./js/attendance.js",
+  "./js/works.js",
+  "./js/cards.js",
+  "./js/reports.js",
+  "./js/settings.js",
+  "./js/bitacora-core.js",
+  "./js/bitacora-ui.js",
+  "./js/bitacora-form.js",
+  "./js/bitacora-docs.js"
 ];
-// CDN libs — se cachean en primera carga con internet
 const CDN_LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js',
@@ -15,7 +36,12 @@ const CDN_LIBS = [
   'https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap'
 ];
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_VERSION).then(cache => Promise.allSettled([...CORE,...CDN_LIBS].map(url => cache.add(url).catch(()=>{})))).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    await cache.addAll(CORE);
+    await Promise.allSettled(CDN_LIBS.map(url => cache.add(url)));
+    await self.skipWaiting();
+  })());
 });
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
