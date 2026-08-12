@@ -22,37 +22,42 @@ jobs:
             exit 0
           fi
 
-          cat .upload/app.js.gz.b64.* | tr -d '\n\r' | base64 -d | gzip -dc > app.js
-          cat .upload/styles.css.gz.b64.* | tr -d '\n\r' | base64 -d | gzip -dc > styles.css
-          tr -d '\n\r' < .upload/index.html.b64 | base64 -d > index.html
-          tr -d '\n\r' < .upload/manifest.json.b64 | base64 -d > manifest.json
-          tr -d '\n\r' < .upload/sw.js.b64 | base64 -d > sw.js
-          tr -d '\n\r' < .upload/_redirects.b64 | base64 -d > _redirects
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib
 
-          mkdir -p icons
-          cat .upload/icon-192.png.b64.* | tr -d '\n\r' | base64 -d > icons/icon-192.png
-          cp icons/icon-192.png icons/icon-192-maskable.png
-          cat .upload/icon-512.png.b64.* | tr -d '\n\r' | base64 -d > icons/icon-512.png
-          cp icons/icon-512.png icons/icon-512-maskable.png
+          def sha256(data):
+              return hashlib.sha256(data).hexdigest()
 
-          cat > /tmp/profeqr.sha256 <<'EOF'
-          b408169880647fd085ef0fb6e62fcb3486517d85a9d338fc2d293a0e46a8316f  app.js
-          12ea7268245857e74a298836d8e9d883a3d0bc8eeab319827d7cf91dd831deba  styles.css
-          460e7e0ecc20fab1500a070ec0303cd9724e96071fbb1e877b7d815d17d7aa07  index.html
-          ac6a56bbd8e3739906f87c977d4fca27065f0c638f7ae5b8badb390c26afd3fe  manifest.json
-          c02261febf41d8271eeaf40d0bb372bf3ba76e9d36e4965c537e6adb34b72246  sw.js
-          6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef  _redirects
-          01ddb4a03634ca10ebf0a3d41417b6c21db78754d72f63790739f3de79946896  icons/icon-192.png
-          01ddb4a03634ca10ebf0a3d41417b6c21db78754d72f63790739f3de79946896  icons/icon-192-maskable.png
-          5f1dd9de029ac406e03127e3dd804aebde5b3344fc2e49f0e29bdc34876fb594  icons/icon-512.png
-          5f1dd9de029ac406e03127e3dd804aebde5b3344fc2e49f0e29bdc34876fb594  icons/icon-512-maskable.png
-          EOF
-          sha256sum --check /tmp/profeqr.sha256
+          def decode_chunks(pattern):
+              parts = sorted(Path('.upload').glob(pattern))
+              if not parts:
+                  raise SystemExit(f'No payload parts for {pattern}')
+              text = ''.join(p.read_text(encoding='ascii') for p in parts)
+              return base64.b64decode(text, validate=True)
+
+          app = gzip.decompress(decode_chunks('app.js.gz.b64.*'))
+          styles = gzip.decompress(decode_chunks('styles.css.gz.b64.*'))
+          files = {
+              'app.js': (app, 'b408169880647fd085ef0fb6e62fcb3486517d85a9d338fc2d293a0e46a8316f'),
+              'styles.css': (styles, '12ea7268245857e74a298836d8e9d883a3d0bc8eeab319827d7cf91dd831deba'),
+              'index.html': (decode_chunks('index.html.b64'), '460e7e0ecc20fab1500a070ec0303cd9724e96071fbb1e877b7d815d17d7aa07'),
+              'manifest.json': (decode_chunks('manifest.json.b64'), 'ac6a56bbd8e3739906f87c977d4fca27065f0c638f7ae5b8badb390c26afd3fe'),
+              'sw.js': (decode_chunks('sw.js.b64'), 'c02261febf41d8271eeaf40d0bb372bf3ba76e9d36e4965c537e6adb34b72246'),
+              '_redirects': (decode_chunks('_redirects.b64'), '6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef'),
+          }
+          for name, (data, expected) in files.items():
+              actual = sha256(data)
+              if actual != expected:
+                  raise SystemExit(f'{name}: SHA256 mismatch {actual} != {expected}')
+              Path(name).write_bytes(data)
+              print(f'{name}: OK {actual}')
+          PY
+
           node --check app.js
-
           rm -rf .upload
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Replace ProfeQr with v8.6"
+          git commit -m "Replace ProfeQr with uploaded version"
           git push
