@@ -1,9 +1,140 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emisor de licencias ProfeQr</title><style>body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;background:#f7f8fb;color:#18202b}.card{background:#fff;border:1px solid #dde3ea;border-radius:16px;padding:20px;margin:16px 0}label{display:block;font-weight:700;margin-top:12px}input,textarea,button{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font:inherit}textarea{min-height:130px}button{margin-top:16px;background:#1e3a8a;color:#fff;font-weight:800;cursor:pointer}.small{font-size:13px;color:#64748b}.ok{color:#166534;font-weight:700}.bad{color:#b91c1c;font-weight:700}</style></head><body><h1>Emisor offline de licencias ProfeQr</h1><p class="small">Esta herramienta firma licencias localmente. La clave privada nunca se envía a Internet. No publiques ni compartas el archivo de clave privada.</p><div class="card"><label>Clave privada ProfeQr (.json)</label><input id="keyFile" type="file" accept="application/json,.json"><label>ID de instalación</label><input id="installationId" placeholder="PQI-..."><label>CCT</label><input id="cct" placeholder="11DTV0020P"><label>Ciclo escolar</label><input id="cycle" placeholder="2026-2027"><label>Escuela (opcional)</label><input id="school"><label>Fecha de vencimiento</label><input id="expiresAt" type="date"><label>ID de licencia</label><input id="licenseId" placeholder="PQ-2026-000001"><button id="generate">Generar licencia firmada</button><div id="status" class="small"></div></div><div class="card"><label>Licencia</label><textarea id="output" readonly></textarea><button id="copy">Copiar licencia</button></div><script>
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Emisor de licencias ProfeQr</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;background:#f7f8fb;color:#18202b}
+.card{background:#fff;border:1px solid #dde3ea;border-radius:16px;padding:20px;margin:16px 0}
+label{display:block;font-weight:700;margin-top:12px}
+input,textarea,button{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font:inherit}
+input[readonly]{background:#f1f5f9;color:#475569}
+textarea{min-height:130px}
+button{margin-top:16px;background:#1e3a8a;color:#fff;font-weight:800;cursor:pointer}
+.small{font-size:13px;color:#64748b}
+.ok{color:#166534;font-weight:700}
+.bad{color:#b91c1c;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Emisor offline de licencias ProfeQr</h1>
+<p class="small">Esta herramienta firma licencias localmente. La clave privada nunca se envía a Internet. No publiques ni compartas el archivo de clave privada.</p>
+<div class="card">
+<label>Clave privada ProfeQr (.json)</label>
+<input id="keyFile" type="file" accept="application/json,.json">
+<label>ID de instalación</label>
+<input id="installationId" placeholder="PQI-...">
+<label>CCT</label>
+<input id="cct" placeholder="11DTV0020P">
+<label>Ciclo escolar</label>
+<input id="cycle" value="2026-2027" placeholder="2026-2027">
+<label>Escuela (opcional)</label>
+<input id="school">
+<label>Fecha de vencimiento (automática)</label>
+<input id="expiresAt" type="date" value="2027-07-30" readonly>
+<div class="small">La licencia vence automáticamente el 30 de julio del año en que termina el ciclo escolar. Ejemplo: 2026-2027 → 30/07/2027.</div>
+<label>ID de licencia</label>
+<input id="licenseId" placeholder="PQ-2026-000001">
+<button id="generate">Generar licencia firmada</button>
+<div id="status" class="small"></div>
+</div>
+<div class="card">
+<label>Licencia</label>
+<textarea id="output" readonly></textarea>
+<button id="copy">Copiar licencia</button>
+</div>
+<script>
 let privateJwk=null;
 const keyFile=document.getElementById('keyFile');
-keyFile.onchange=async()=>{try{privateJwk=JSON.parse(await keyFile.files[0].text());document.getElementById('status').className='ok';document.getElementById('status').textContent='Clave privada cargada.';}catch(e){privateJwk=null;document.getElementById('status').className='bad';document.getElementById('status').textContent='No se pudo leer la clave privada.';}};
-function b64u(bytes){let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
-function normalizeCct(v){return String(v||'').toUpperCase().replace(/\s+/g,'').trim();}
-document.getElementById('generate').onclick=async()=>{const status=document.getElementById('status');try{if(!privateJwk)throw new Error('Carga la clave privada.');const installationId=document.getElementById('installationId').value.trim();const cct=normalizeCct(document.getElementById('cct').value);const cycle=document.getElementById('cycle').value.trim();const expiresAt=document.getElementById('expiresAt').value;const licenseId=document.getElementById('licenseId').value.trim();if(!installationId||!cct||!cycle||!expiresAt||!licenseId)throw new Error('Completa los campos obligatorios.');const payload={v:1,product:'profeqr',licenseId,installationId,cct,cycle,school:document.getElementById('school').value.trim(),issuedAt:new Date().toISOString().slice(0,10),expiresAt};const bytes=new TextEncoder().encode(JSON.stringify(payload));const key=await crypto.subtle.importKey('jwk',privateJwk,{name:'ECDSA',namedCurve:'P-256'},false,['sign']);const sig=new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,bytes));const token='PQ1.'+b64u(bytes)+'.'+b64u(sig);document.getElementById('output').value=token;status.className='ok';status.textContent='Licencia generada. Entrégala únicamente a la instalación indicada.';}catch(e){status.className='bad';status.textContent=e.message||'No se pudo generar la licencia.';}};
-document.getElementById('copy').onclick=async()=>{const v=document.getElementById('output').value;if(!v)return;await navigator.clipboard.writeText(v);document.getElementById('status').className='ok';document.getElementById('status').textContent='Licencia copiada.';};
-</script></body></html>
+const cycleEl=document.getElementById('cycle');
+const expiresEl=document.getElementById('expiresAt');
+
+keyFile.onchange=async()=>{
+  try{
+    privateJwk=JSON.parse(await keyFile.files[0].text());
+    document.getElementById('status').className='ok';
+    document.getElementById('status').textContent='Clave privada cargada.';
+  }catch(e){
+    privateJwk=null;
+    document.getElementById('status').className='bad';
+    document.getElementById('status').textContent='No se pudo leer la clave privada.';
+  }
+};
+
+function b64u(bytes){
+  let s='';
+  for(const b of bytes)s+=String.fromCharCode(b);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+function normalizeCct(v){
+  return String(v||'').toUpperCase().replace(/\s+/g,'').trim();
+}
+
+function expiryForCycle(cycle){
+  const value=String(cycle||'').trim();
+  const match=/^(\d{4})-(\d{4})$/.exec(value);
+  if(!match) throw new Error('El ciclo escolar debe tener formato AAAA-AAAA, por ejemplo 2026-2027.');
+  const start=Number(match[1]);
+  const end=Number(match[2]);
+  if(end!==start+1) throw new Error('El ciclo escolar debe abarcar dos años consecutivos.');
+  return `${end}-07-30`;
+}
+
+function syncExpiry(){
+  try{
+    expiresEl.value=expiryForCycle(cycleEl.value);
+  }catch(e){
+    expiresEl.value='';
+  }
+}
+
+cycleEl.addEventListener('input',syncExpiry);
+syncExpiry();
+
+document.getElementById('generate').onclick=async()=>{
+  const status=document.getElementById('status');
+  try{
+    if(!privateJwk) throw new Error('Carga la clave privada.');
+    const installationId=document.getElementById('installationId').value.trim();
+    const cct=normalizeCct(document.getElementById('cct').value);
+    const cycle=cycleEl.value.trim();
+    const expiresAt=expiryForCycle(cycle);
+    expiresEl.value=expiresAt;
+    const licenseId=document.getElementById('licenseId').value.trim();
+    if(!installationId||!cct||!cycle||!licenseId) throw new Error('Completa los campos obligatorios.');
+    const payload={
+      v:1,
+      product:'profeqr',
+      licenseId,
+      installationId,
+      cct,
+      cycle,
+      school:document.getElementById('school').value.trim(),
+      issuedAt:new Date().toISOString().slice(0,10),
+      expiresAt
+    };
+    const bytes=new TextEncoder().encode(JSON.stringify(payload));
+    const key=await crypto.subtle.importKey('jwk',privateJwk,{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
+    const sig=new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,bytes));
+    const token='PQ1.'+b64u(bytes)+'.'+b64u(sig);
+    document.getElementById('output').value=token;
+    status.className='ok';
+    status.textContent=`Licencia generada. Vigencia hasta ${expiresAt}. Entrégala únicamente a la instalación indicada.`;
+  }catch(e){
+    status.className='bad';
+    status.textContent=e.message||'No se pudo generar la licencia.';
+  }
+};
+
+document.getElementById('copy').onclick=async()=>{
+  const v=document.getElementById('output').value;
+  if(!v)return;
+  await navigator.clipboard.writeText(v);
+  document.getElementById('status').className='ok';
+  document.getElementById('status').textContent='Licencia copiada.';
+};
+</script>
+</body>
+</html>
