@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'profeqr-v8-7-attention-center';
+const CACHE_VERSION = 'profeqr-v9-etapa3-comunicacion';
 const APP_SHELL = new Request('./index.html');
 const CORE = [
   "./",
@@ -23,6 +23,9 @@ const CORE = [
   "./js/guardias.js",
   "./js/students.js",
   "./js/attendance.js",
+  "./js/attendance-direction.js",
+  "./js/attendance-reminders.js",
+  "./js/school-communication.js",
   "./js/works.js",
   "./js/cards.js",
   "./js/reports.js",
@@ -93,4 +96,17 @@ self.addEventListener('fetch', event => {
       return Response.error();
     }
   })());
+});
+self.addEventListener('push', event => {
+  const data = (() => { try { return event.data ? event.data.json() : {}; } catch (e) { return { title:'ProfeQR', body:event.data ? event.data.text() : 'Nuevo aviso escolar' }; } })();
+  event.waitUntil(self.registration.showNotification(data.title || 'ProfeQR', {
+    body: data.body || 'Nuevo aviso escolar', icon: './icons/icon-192.png', badge: './icons/icon-192.png', data: { url: data.url || './' }
+  }));
+});
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(clients.matchAll({ type:'window', includeUncontrolled:true }).then(list => {
+    const existing = list.find(c => 'focus' in c);
+    return existing ? existing.focus() : clients.openWindow(event.notification.data?.url || './');
+  }));
 });
