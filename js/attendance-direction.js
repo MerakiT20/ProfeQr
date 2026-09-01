@@ -7,7 +7,7 @@
 
   function readJson(key,fallback){try{return JSON.parse(localStorage.getItem(key)||'')||fallback;}catch(e){return fallback;}}
   function writeJson(key,value){localStorage.setItem(key,JSON.stringify(value));}
-  function cfg(){return readJson(CFG_KEY,{supabaseUrl:'',anonKey:'',schoolId:'',teacherId:'',teacherName:'',groupName:''});}
+  function cfg(){return readJson(CFG_KEY,{supabaseUrl:'',anonKey:'',schoolToken:'',schoolId:'',teacherId:'',teacherName:'',groupName:''});}
   function reportMeta(){return readJson(REPORT_META_KEY,{});}
   function setReportMeta(date,value){const all=reportMeta();all[date]=value;writeJson(REPORT_META_KEY,all);}
   function reportHistory(){return readJson(REPORT_HISTORY_KEY,[]);}
@@ -15,7 +15,7 @@
   function getStudents(){try{return [...getActiveStudents()].sort((a,b)=>(a.listNo||999)-(b.listNo||999));}catch(e){return [];}}
   function rowsFor(date){return (db&&db.group&&db.group.attendance&&db.group.attendance[date])||[];}
   function attendanceSignature(date){return rowsFor(date).map(r=>r.studentId).sort().join('|');}
-  function buildPayload(date){
+  function buildPayload(date,revision){
     const students=getStudents();
     const rows=rowsFor(date);
     const presentIds=new Set(rows.map(r=>r.studentId));
@@ -26,7 +26,7 @@
       group_name:c.groupName||db?.group?.name||db?.group?.groupName||'Grupo',
       teacher_id:c.teacherId||'teacher-unconfigured',teacher_name:c.teacherName||'',
       total_students:students.length,present_count:rows.length,absent_count:absences.length,absences,
-      captured_at:new Date().toISOString(),app:'ProfeQr'
+      revision:Number(revision)||1,captured_at:new Date().toISOString(),app:'ProfeQr'
     };
   }
   function queue(payload){
@@ -39,10 +39,10 @@
   }
   async function send(payload){
     const c=cfg();
-    if(!c.supabaseUrl||!c.anonKey||!c.schoolId||!c.groupName) throw new Error('SYNC_NOT_CONFIGURED');
+    if(!c.supabaseUrl||!c.anonKey||!c.schoolToken||!c.schoolId||!c.groupName) throw new Error('SYNC_NOT_CONFIGURED');
     const finalPayload=normalizePayload(payload);
     const url=c.supabaseUrl.replace(/\/$/,'')+'/rest/v1/attendance_reports?on_conflict=school_id,report_date,group_name';
-    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','apikey':c.anonKey,'Authorization':'Bearer '+c.anonKey,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(finalPayload)});
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','apikey':c.anonKey,'Authorization':'Bearer '+c.anonKey,'x-school-token':c.schoolToken,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(finalPayload)});
     if(!res.ok) throw new Error('SYNC_HTTP_'+res.status);
   }
   async function flush(){
@@ -59,9 +59,9 @@
     writeJson(OUTBOX_KEY,keep);
   }
   async function submit(date){
-    const payload=buildPayload(date);
     const previous=reportMeta()[date]||null;
     const revision=(previous?.revision||0)+1;
+    const payload=buildPayload(date,revision);
     const localSubmittedAt=new Date().toISOString();
     const signature=attendanceSignature(date);
     const baseMeta={status:'sending',at:localSubmittedAt,revision,signature,presentCount:payload.present_count,absentCount:payload.absent_count};
@@ -105,11 +105,12 @@
   function configure(){
     const c=cfg();const supabaseUrl=prompt('URL de Supabase (puede dejarse vacío en Etapa 1)',c.supabaseUrl||'');if(supabaseUrl===null)return;
     const anonKey=supabaseUrl?prompt('Anon key de Supabase',c.anonKey||''):'';if(anonKey===null)return;
+    const schoolToken=supabaseUrl?prompt('Clave privada de sincronización de la escuela',c.schoolToken||''):'';if(schoolToken===null)return;
     const schoolId=prompt('Clave de escuela (ej. 11DTV0020P)',c.schoolId||'');if(schoolId===null)return;
     const teacherName=prompt('Nombre del docente',c.teacherName||'');if(teacherName===null)return;
     const groupName=prompt('Grupo (ej. 2°G)',c.groupName||'');if(groupName===null)return;
     const teacherId=prompt('ID corto del docente (ej. murillo-2g)',c.teacherId||'');if(teacherId===null)return;
-    writeJson(CFG_KEY,{supabaseUrl:supabaseUrl.trim(),anonKey:String(anonKey||'').trim(),schoolId:schoolId.trim(),teacherName:teacherName.trim(),groupName:groupName.trim(),teacherId:teacherId.trim()});
+    writeJson(CFG_KEY,{supabaseUrl:supabaseUrl.trim(),anonKey:String(anonKey||'').trim(),schoolToken:String(schoolToken||'').trim(),schoolId:schoolId.trim(),teacherName:teacherName.trim(),groupName:groupName.trim(),teacherId:teacherId.trim()});
     toast(supabaseUrl?'Enlace guardado en este dispositivo':'Configuración local guardada');flush();
   }
   if(typeof renderAttendance==='function'){const originalRender=renderAttendance;renderAttendance=function(){return originalRender()+reportCard(attendanceDate);};}
