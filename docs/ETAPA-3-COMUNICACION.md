@@ -26,6 +26,8 @@ Cada dispositivo usa un token individual asociado con escuela, actor, rol y grup
 
 El service worker ya puede recibir y mostrar eventos Web Push. El envío con la aplicación completamente cerrada requiere desplegar un emisor seguro —por ejemplo, una Edge Function— y configurar VAPID. Hasta entonces funcionan la actualización periódica y las notificaciones locales cuando la PWA está activa.
 
+Se incluyen dos funciones: `send-school-push` para avisos e incidencias y `attendance-reminders` para avisar a docentes pendientes y enviar a Dirección el corte diario. Esta última debe programarse para las 14:40 y 15:00/15:05 en horario `America/Mexico_City`, usando `CRON_SECRET`.
+
 ## Criterio de cierre
 
 La etapa debe probarse con un token de Dirección y al menos dos tokens docentes distintos, incluyendo pruebas negativas: un docente no debe ver mensajes de otro ni reportar un grupo ajeno.
