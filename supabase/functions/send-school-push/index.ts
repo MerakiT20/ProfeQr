@@ -16,9 +16,12 @@ Deno.serve(async req=>{
     const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));
     const tokenHash=[...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,'0')).join('');
     const {data:actor}=await db.from('school_actor_keys').select('actor_id,actor_role,school_id').eq('school_id',input.school_id).eq('token_hash',tokenHash).eq('active',true).maybeSingle();
-    if(!actor||actor.actor_role!=='director')throw new Error('FORBIDDEN');
+    if(!actor)throw new Error('FORBIDDEN');
     let actorIds:string[]=[];
-    if(input.audience_type==='teacher')actorIds=[input.audience_value];
+    if(actor.actor_role==='teacher'&&input.audience_type==='director'){
+      const {data}=await db.from('school_actor_keys').select('actor_id').eq('school_id',input.school_id).eq('actor_role','director').eq('active',true);actorIds=(data||[]).map(x=>x.actor_id);
+    }else if(actor.actor_role!=='director')throw new Error('FORBIDDEN');
+    else if(input.audience_type==='teacher')actorIds=[input.audience_value];
     else if(input.audience_type==='group'){const {data}=await db.from('school_actor_keys').select('actor_id').eq('school_id',input.school_id).eq('group_name',input.audience_value).eq('active',true);actorIds=(data||[]).map(x=>x.actor_id);}
     else {const {data}=await db.from('school_actor_keys').select('actor_id').eq('school_id',input.school_id).eq('actor_role','teacher').eq('active',true);actorIds=(data||[]).map(x=>x.actor_id);}
     const {data:subs}=await db.from('push_subscriptions').select('*').eq('school_id',input.school_id).in('actor_id',actorIds).eq('active',true);
