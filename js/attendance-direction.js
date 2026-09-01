@@ -105,7 +105,7 @@
   function configure(){
     const c=cfg();const supabaseUrl=prompt('URL de Supabase (puede dejarse vacío en Etapa 1)',c.supabaseUrl||'');if(supabaseUrl===null)return;
     const anonKey=supabaseUrl?prompt('Anon key de Supabase',c.anonKey||''):'';if(anonKey===null)return;
-    const schoolToken=supabaseUrl?prompt('Clave privada de sincronización de la escuela',c.schoolToken||''):'';if(schoolToken===null)return;
+    const schoolToken=supabaseUrl?prompt('Token individual de este docente',c.schoolToken||''):'';if(schoolToken===null)return;
     const schoolId=prompt('Clave de escuela (ej. 11DTV0020P)',c.schoolId||'');if(schoolId===null)return;
     const teacherName=prompt('Nombre del docente',c.teacherName||'');if(teacherName===null)return;
     const groupName=prompt('Grupo (ej. 2°G)',c.groupName||'');if(groupName===null)return;
