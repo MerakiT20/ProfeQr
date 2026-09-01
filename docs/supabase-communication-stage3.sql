@@ -64,10 +64,18 @@ create table if not exists public.communication_audit (
 );
 create index if not exists idx_communication_audit_school_date on public.communication_audit(school_id,created_at desc);
 
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(), school_id text not null, actor_id text not null,
+  endpoint text not null, p256dh text not null, auth text not null, user_agent text,
+  active boolean not null default true, updated_at timestamptz not null default now(),
+  unique(school_id,actor_id,endpoint)
+);
+
 alter table public.school_notices enable row level security;
 alter table public.notice_reads enable row level security;
 alter table public.school_messages enable row level security;
 alter table public.communication_audit enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 drop policy if exists attendance_reports_actor_read on public.attendance_reports;
 drop policy if exists attendance_reports_teacher_insert on public.attendance_reports;
@@ -81,6 +89,9 @@ drop policy if exists messages_participant_read on public.school_messages;
 drop policy if exists messages_teacher_insert on public.school_messages;
 drop policy if exists messages_director_update on public.school_messages;
 drop policy if exists audit_director_read on public.communication_audit;
+drop policy if exists push_owner_select on public.push_subscriptions;
+drop policy if exists push_owner_insert on public.push_subscriptions;
+drop policy if exists push_owner_update on public.push_subscriptions;
 
 drop policy if exists attendance_reports_school_read on public.attendance_reports;
 drop policy if exists attendance_reports_school_insert on public.attendance_reports;
@@ -108,6 +119,9 @@ create policy messages_participant_read on public.school_messages for select to 
 create policy messages_teacher_insert on public.school_messages for insert to anon,authenticated with check ((public.request_actor(school_id)->>'role')='teacher' and teacher_id=(public.request_actor(school_id)->>'id') and group_name=(public.request_actor(school_id)->>'group'));
 create policy messages_director_update on public.school_messages for update to anon,authenticated using ((public.request_actor(school_id)->>'role')='director') with check ((public.request_actor(school_id)->>'role')='director');
 create policy audit_director_read on public.communication_audit for select to anon,authenticated using ((public.request_actor(school_id)->>'role')='director');
+create policy push_owner_select on public.push_subscriptions for select to anon,authenticated using (actor_id=(public.request_actor(school_id)->>'id'));
+create policy push_owner_insert on public.push_subscriptions for insert to anon,authenticated with check (actor_id=(public.request_actor(school_id)->>'id'));
+create policy push_owner_update on public.push_subscriptions for update to anon,authenticated using (actor_id=(public.request_actor(school_id)->>'id')) with check (actor_id=(public.request_actor(school_id)->>'id'));
 
 create or replace function public.audit_school_change() returns trigger language plpgsql security definer set search_path=public as $$
 declare school text:=coalesce(new.school_id,old.school_id); actor jsonb; entity text:=tg_table_name; eid text;
