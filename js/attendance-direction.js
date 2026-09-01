@@ -1,0 +1,132 @@
+/* ProfeQr -> Direkta attendance reporting layer */
+(function(){
+  const CFG_KEY='profeqr_school_sync_v1';
+  const OUTBOX_KEY='profeqr_attendance_outbox_v1';
+  const REPORT_META_KEY='profeqr_attendance_report_meta_v1';
+  const REPORT_HISTORY_KEY='profeqr_attendance_report_history_v1';
+
+  function readJson(key,fallback){try{return JSON.parse(localStorage.getItem(key)||'')||fallback;}catch(e){return fallback;}}
+  function writeJson(key,value){localStorage.setItem(key,JSON.stringify(value));}
+  function cfg(){return readJson(CFG_KEY,{supabaseUrl:'',anonKey:'',schoolToken:'',schoolId:'',teacherId:'',teacherName:'',groupName:''});}
+  function reportMeta(){return readJson(REPORT_META_KEY,{});}
+  function setReportMeta(date,value){const all=reportMeta();all[date]=value;writeJson(REPORT_META_KEY,all);}
+  function reportHistory(){return readJson(REPORT_HISTORY_KEY,[]);}
+  function addHistory(entry){const all=reportHistory();all.unshift(entry);writeJson(REPORT_HISTORY_KEY,all.slice(0,500));}
+  function getStudents(){try{return [...getActiveStudents()].sort((a,b)=>(a.listNo||999)-(b.listNo||999));}catch(e){return [];}}
+  function rowsFor(date){return (db&&db.group&&db.group.attendance&&db.group.attendance[date])||[];}
+  function attendanceSignature(date){return rowsFor(date).map(r=>r.studentId).sort().join('|');}
+  function buildPayload(date,revision){
+    const students=getStudents();
+    const rows=rowsFor(date);
+    const presentIds=new Set(rows.map(r=>r.studentId));
+    const absences=students.filter(s=>!presentIds.has(s.id)).map(s=>({studentId:s.id,name:s.name,listNo:s.listNo||null}));
+    const c=cfg();
+    return {
+      school_id:c.schoolId||'school-unconfigured',report_date:date,
+      group_name:c.groupName||db?.group?.name||db?.group?.groupName||'Grupo',
+      teacher_id:c.teacherId||'teacher-unconfigured',teacher_name:c.teacherName||'',
+      total_students:students.length,present_count:rows.length,absent_count:absences.length,absences,
+      revision:Number(revision)||1,captured_at:new Date().toISOString(),app:'ProfeQr'
+    };
+  }
+  function queue(payload){
+    const out=readJson(OUTBOX_KEY,[]).filter(x=>x?.payload?.report_date!==payload.report_date);
+    out.push({id:Date.now()+'-'+Math.random().toString(36).slice(2),payload});writeJson(OUTBOX_KEY,out);
+  }
+  function normalizePayload(payload){
+    const c=cfg();
+    return {...payload,school_id:c.schoolId||payload.school_id,group_name:c.groupName||payload.group_name,teacher_id:c.teacherId||payload.teacher_id,teacher_name:c.teacherName||payload.teacher_name};
+  }
+  async function send(payload){
+    const c=cfg();
+    if(!c.supabaseUrl||!c.anonKey||!c.schoolToken||!c.schoolId||!c.groupName) throw new Error('SYNC_NOT_CONFIGURED');
+    const finalPayload=normalizePayload(payload);
+    const url=c.supabaseUrl.replace(/\/$/,'')+'/rest/v1/attendance_reports?on_conflict=school_id,report_date,group_name';
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','apikey':c.anonKey,'Authorization':'Bearer '+c.anonKey,'x-school-token':c.schoolToken,'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(finalPayload)});
+    if(!res.ok) throw new Error('SYNC_HTTP_'+res.status);
+  }
+  async function flush(){
+    if(!navigator.onLine)return;
+    const out=readJson(OUTBOX_KEY,[]);if(!out.length)return;
+    const keep=[];
+    for(const item of out){
+      try{
+        await send(item.payload);
+        const old=reportMeta()[item.payload.report_date]||{};
+        setReportMeta(item.payload.report_date,{...old,status:'sent',syncedAt:new Date().toISOString()});
+      }catch(e){keep.push(item);}
+    }
+    writeJson(OUTBOX_KEY,keep);
+  }
+  async function submit(date){
+    const previous=reportMeta()[date]||null;
+    const revision=(previous?.revision||0)+1;
+    const payload=buildPayload(date,revision);
+    const localSubmittedAt=new Date().toISOString();
+    const signature=attendanceSignature(date);
+    const baseMeta={status:'sending',at:localSubmittedAt,revision,signature,presentCount:payload.present_count,absentCount:payload.absent_count};
+    setReportMeta(date,baseMeta);
+    addHistory({date,revision,submittedAt:localSubmittedAt,signature,presentCount:payload.present_count,absentCount:payload.absent_count,absences:payload.absences});
+    try{
+      await send(payload);
+      setReportMeta(date,{...baseMeta,status:'sent',syncedAt:new Date().toISOString()});
+      if(typeof toast==='function')toast(revision>1?'Corrección enviada a Dirección ✓':'Reporte enviado a Dirección ✓');
+    }catch(e){
+      queue(payload);
+      setReportMeta(date,{...baseMeta,status:'queued'});
+      if(typeof toast==='function')toast(e.message==='SYNC_NOT_CONFIGURED'?'Reporte confirmado y guardado en este dispositivo':'Sin conexión: reporte confirmado y pendiente de sincronizar');
+    }
+    if(typeof renderCurrentScreen==='function')renderCurrentScreen();
+  }
+  function isChangedAfterReport(date){const m=reportMeta()[date];return Boolean(m?.signature&&m.signature!==attendanceSignature(date));}
+  function statusHtml(date){
+    const m=reportMeta()[date];if(!m)return '<span class="badge bad">Pendiente de reportar</span>';
+    if(isChangedAfterReport(date))return '<span class="badge bad">⚠ Cambios sin reenviar</span>';
+    if(m.status==='sent')return `<span class="badge ok">✓ Reportado${m.revision>1?' · corrección '+m.revision:''}</span>`;
+    if(m.status==='queued')return `<span class="badge primary">✓ Confirmado · ${cfg().supabaseUrl?'pendiente de sincronizar':'guardado local'}</span>`;
+    return '<span class="badge primary">Enviando…</span>';
+  }
+  function reportCard(date){
+    const students=getStudents(),rows=rowsFor(date),absent=Math.max(students.length-rows.length,0),m=reportMeta()[date];
+    const submitted=m?.at?new Date(m.at).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}):'';
+    return `<div class="card no-print" id="att-direction-card">
+      <div class="section-title">Reporte a Dirección</div>
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+        <div>${statusHtml(date)}<div class="small" style="margin-top:6px">${rows.length} presentes · ${absent} ausentes · ${students.length} total${submitted?' · confirmado '+submitted:''}</div></div>
+        <button class="btn primary" id="att-submit-director" ${isExpired()?'disabled':''}>${m?'Reenviar / corregir':'Confirmar reporte'}</button>
+      </div>
+      <div class="row row2" style="margin-top:10px">
+        <button class="btn" id="att-fast-start" ${isExpired()?'disabled':''}>Pase rápido: todos presentes</button>
+        <button class="btn" id="att-sync-config">Configurar enlace</button>
+      </div>
+      <div class="small" style="margin-top:8px">Todos quedan presentes por defecto; marca únicamente a quienes faltaron. Si corriges después de confirmar, el sistema te avisará que debes reenviar.</div>
+    </div>`;
+  }
+  function configure(){
+    const c=cfg();const supabaseUrl=prompt('URL de Supabase (puede dejarse vacío en Etapa 1)',c.supabaseUrl||'');if(supabaseUrl===null)return;
+    const anonKey=supabaseUrl?prompt('Anon key de Supabase',c.anonKey||''):'';if(anonKey===null)return;
+    const schoolToken=supabaseUrl?prompt('Clave privada de sincronización de la escuela',c.schoolToken||''):'';if(schoolToken===null)return;
+    const schoolId=prompt('Clave de escuela (ej. 11DTV0020P)',c.schoolId||'');if(schoolId===null)return;
+    const teacherName=prompt('Nombre del docente',c.teacherName||'');if(teacherName===null)return;
+    const groupName=prompt('Grupo (ej. 2°G)',c.groupName||'');if(groupName===null)return;
+    const teacherId=prompt('ID corto del docente (ej. murillo-2g)',c.teacherId||'');if(teacherId===null)return;
+    writeJson(CFG_KEY,{supabaseUrl:supabaseUrl.trim(),anonKey:String(anonKey||'').trim(),schoolToken:String(schoolToken||'').trim(),schoolId:schoolId.trim(),teacherName:teacherName.trim(),groupName:groupName.trim(),teacherId:teacherId.trim()});
+    toast(supabaseUrl?'Enlace guardado en este dispositivo':'Configuración local guardada');flush();
+  }
+  if(typeof renderAttendance==='function'){const originalRender=renderAttendance;renderAttendance=function(){return originalRender()+reportCard(attendanceDate);};}
+  if(typeof bindAttendance==='function'){
+    const originalBind=bindAttendance;bindAttendance=function(){originalBind();
+      const submitBtn=document.getElementById('att-submit-director');if(submitBtn)submitBtn.onclick=()=>submit(attendanceDate);
+      const cfgBtn=document.getElementById('att-sync-config');if(cfgBtn)cfgBtn.onclick=configure;
+      const fastBtn=document.getElementById('att-fast-start');if(fastBtn)fastBtn.onclick=()=>{
+        if(!canWrite())return writeBlockedMessage();
+        const rows=db.group.attendance[attendanceDate]||[];const ids=new Set(rows.map(r=>r.studentId));
+        const extra=getStudents().filter(s=>!ids.has(s.id)).map(s=>({id:uid(),date:attendanceDate,time:nowTime(),studentId:s.id,studentName:s.name,listNo:s.listNo,source:'PASE_RAPIDO'}));
+        db.group.attendance[attendanceDate]=[...extra,...rows];
+        if(saveDb()){attendanceTab='manual';toast('Todos presentes. Marca únicamente las faltas.');renderCurrentScreen();}
+      };
+    };
+  }
+  window.addEventListener('online',flush);setInterval(flush,60000);setTimeout(flush,2500);
+  window.ProfeQrAttendanceSync={submit,flush,configure,buildPayload,attendanceSignature,reportMeta,reportHistory};
+})();
