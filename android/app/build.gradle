@@ -1,0 +1,62 @@
+plugins {
+    id 'com.android.application'
+}
+
+def webSource = rootProject.projectDir.parentFile
+def generatedAssets = file("$buildDir/generated/profeqrAssets")
+def generatedResources = file("$buildDir/generated/profeqrRes")
+
+android {
+    namespace 'mx.edu.telesecundaria20.profeqr'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'mx.edu.telesecundaria20.profeqr'
+        minSdk 26
+        targetSdk 35
+        versionCode 88
+        versionName '8.8.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            assets.srcDir generatedAssets
+            res.srcDir generatedResources
+        }
+    }
+}
+
+tasks.register('syncWebAssets', Sync) {
+    from(webSource) {
+        include 'index.html', 'styles.css', 'manifest.json', 'sw.js'
+        include 'icons/**', 'js/**', 'vendor/**'
+    }
+    into new File(generatedAssets, 'www')
+}
+
+tasks.register('syncAppIcon', Copy) {
+    from new File(webSource, 'icons/icon-512.png')
+    into new File(generatedResources, 'drawable')
+    rename { 'app_icon.png' }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn 'syncWebAssets', 'syncAppIcon'
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

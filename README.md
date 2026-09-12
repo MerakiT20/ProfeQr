@@ -18,3 +18,14 @@ npm test
 ```
 
 La batería cubre sintaxis, arranque, PWA offline en raíz y subruta, alumnos e historial, asistencia, trabajos/Excel, PIN/licencia, respaldos/documentos, dictado, Centro de Atención y Bitácora A/B/C/CIT.
+
+## Android
+
+El proyecto nativo de `android/` empaqueta la misma aplicación web dentro de un origen HTTPS local. Incluye cámara para QR, selector de archivos, descargas al dispositivo, dictado nativo y almacenamiento privado de la aplicación.
+
+```bash
+cd android
+gradle :app:assembleRelease
+```
+
+La compilación automatizada genera un APK firmado y un respaldo separado de la clave de firma. Esa clave debe conservarse de forma privada: las siguientes versiones necesitan la misma firma para instalarse como actualización.
