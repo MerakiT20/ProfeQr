@@ -15,21 +15,21 @@ function openStudentProfile(sid){
   renderCurrentScreen();
 }
 function renderStudentProfile(){
-  const s = db.group.students.find(x=>x.id===studentProfileId);
+  const s = db.group.students.find(x=>String(x.id)===String(studentProfileId));
   if(!s){
     return '<div class="card"><div class="section-title">Perfil de alumno</div>' +
            '<div class="small">Alumno no encontrado.</div>' +
-           '<button class="btn secondary" style="margin-top:10px" onclick="currentScreen=\'students\';renderCurrentScreen()">Volver a alumnos</button></div>';
+           '<button class="btn secondary" style="margin-top:10px" data-profile-back>Volver a alumnos</button></div>';
   }
-  const attRows = Object.values(db.group.attendance||{}).flat().filter(r=>r.studentId===s.id);
-  const uDates  = [...new Set(attRows.map(r=>r.date))];
-  const totalD  = Object.keys(db.group.attendance||{}).length;
+  const registeredDates=attendanceRegisteredDates();
+  const uDates  = registeredDates.filter(date=>(db.group.attendance[date]||[]).some(r=>String(r.studentId)===String(s.id)));
+  const totalD  = registeredDates.length;
   const faltas  = Math.max(totalD - uDates.length, 0);
   const pct     = totalD>0 ? Math.round((uDates.length/totalD)*100) : 0;
-  const works   = (db.group.works||[]).filter(w=>w.studentId===s.id);
+  const works   = (db.group.works||[]).filter(w=>String(w.studentId)===String(s.id));
   const pts     = works.reduce((a,b)=>a+Number(b.score||0),0);
   const prom    = works.length ? (pts/works.length).toFixed(2) : '—';
-  const reps    = (db.group.bitacoraReports||[]).filter(r=>r.alumno_id===s.id||(r.studentIds||[]).includes(s.id));
+  const reps    = (db.group.bitacoraReports||[]).filter(r=>String(r.alumno_id||'')===String(s.id)||(r.studentIds||[]).some(id=>String(id)===String(s.id)));
   const openInc = reps.filter(r=>buildReportStatus(normalizeBitacoraReport(r))!=='cerrado').length;
   let html = '<div class="card">';
   html += '<div class="section-title">' + esc(s.name) + '</div>';
@@ -51,13 +51,16 @@ function renderStudentProfile(){
     html += '</div>';
   }
   html += '<div class="row row2" style="margin-top:14px">';
-  html += '<button class="btn secondary" onclick="currentScreen=\'students\';renderCurrentScreen()">&#8592; Volver</button>';
-  html += '<button class="btn secondary" onclick="currentScreen=\'attendance\';renderCurrentScreen()">Ver asistencia</button>';
+  html += '<button class="btn secondary" data-profile-back>&#8592; Volver</button>';
+  html += '<button class="btn secondary" data-profile-attendance>Ver asistencia</button>';
   html += '</div>';
   html += '</div>';
   return html;
 }
-function bindStudentProfile(){}
+function bindStudentProfile(){
+  document.querySelectorAll('[data-profile-back]').forEach(btn=>btn.onclick=()=>{ currentScreen='students'; renderCurrentScreen(); });
+  document.querySelectorAll('[data-profile-attendance]').forEach(btn=>btn.onclick=()=>{ currentScreen='attendance'; renderCurrentScreen(); });
+}
 
 function renderCurrentScreen(){
   const host = document.getElementById('screen-host');
@@ -107,7 +110,8 @@ function dash11GetStats(){
   const todayRows = db.group.attendance?.[today()]||[];
   const students = getActiveStudents();
   const total = students.length;
-  const present = todayRows.length;
+  const activeIds=new Set(students.map(s=>String(s.id)));
+  const present = new Set(todayRows.map(r=>String(r.studentId)).filter(id=>activeIds.has(id))).size;
   const absent = Math.max(total - present, 0);
   const pct = total>0 ? Math.round((present/total)*100) : 0;
   const works = db.group.works||[];
@@ -118,8 +122,8 @@ function dash11GetStats(){
   const pending = todayWorks.filter(w=>w.score===0).length;
   const openInc = (db.group.bitacoraReports||[]).filter(r=>buildReportStatus(normalizeBitacoraReport(r))!=='cerrado').length;
   const highFaltas = students.filter(s=>{
-    const allDates=Object.keys(db.group.attendance||{});
-    const att=allDates.filter(d=>(db.group.attendance[d]||[]).some(r=>r.studentId===s.id)).length;
+    const allDates=attendanceRegisteredDates();
+    const att=allDates.filter(d=>(db.group.attendance[d]||[]).some(r=>String(r.studentId)===String(s.id))).length;
     const totalD=allDates.length;
     return totalD>0 && ((totalD-att)/totalD)>0.2;
   }).length;
@@ -273,7 +277,7 @@ function renderHome(){
     <button class="dash11-chip" data-go="agenda">🕐 Horario</button>
     <button class="dash11-chip" data-go="agenda">📅 Calendario</button>
     <button class="dash11-chip" data-go="guardias">🛡️ Guardias</button>
-    <button class="dash11-chip" data-go="biblioteca">📄 Documentos</button>
+    <button class="dash11-chip" data-go="documents">📄 Documentos</button>
   </div>
 
   <!-- REPORTES RÁPIDOS -->
@@ -311,5 +315,4 @@ function bindHome(){
     currentScreen='agenda'; agendaTab='form'; agendaEditingId=''; renderCurrentScreen();
   }));
 }
-
 

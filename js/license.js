@@ -96,7 +96,7 @@ function licenseExpiryDate(){
 function canEditUnlicensedIdentity(){
   if(licenseRuntime.mode!=='none' || licenseRuntime.reason!=='missing') return false;
   const g=db?.group||{};
-  return !(g.students||[]).length && !(g.works||[]).length && !Object.keys(g.attendance||{}).length && !(g.bitacoraReports||[]).length;
+  return !(g.students||[]).length && !(g.works||[]).length && !attendanceRegisteredDates(g.attendance||{}).length && !(g.bitacoraReports||[]).length;
 }
 function licenseStatusLabel(){
   if(!db?.config) return 'Configuración inicial';

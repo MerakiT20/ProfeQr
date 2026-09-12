@@ -2,18 +2,21 @@
 let workDate = today();
 let workCampo = CAMPOS[0].campo;
 let workAsignatura = CAMPOS[0].asignaturas[0];
-let workTitle = sessionStorage.getItem('profeqr_workTitle') || '';
+let workTitle = (()=>{ try{ return sessionStorage.getItem('profeqr_workTitle')||''; }catch(e){ return ''; } })();
 let workScoreMode = 2;
 let worksTab = 'scan';
 
 function currentWorkKey(){ return `${workDate}__${workCampo}__${workAsignatura}__${workTitle.trim().toLowerCase()}`; }
 function currentWorkRows(){ return db.group.works.filter(w=>w.key===currentWorkKey()); }
+function workAchievement(score){ return LOGROS[Math.max(0,Math.min(3,Number(score)||0))]||LOGROS[0]; }
 
 function saveOrUpdateWork(studentId, score, source='QR'){
   if(!canWrite()) return 'blocked';
-  const s = db.group.students.find(x=>x.id===studentId);
+  const s = db.group.students.find(x=>String(x.id)===String(studentId));
+  if(!s || !isStudentActive(s)) return 'missing';
+  score=Math.max(0,Math.min(3,Number(score)||0));
   const key = currentWorkKey();
-  const existing = db.group.works.find(w=>w.key===key && w.studentId===studentId);
+  const existing = db.group.works.find(w=>w.key===key && String(w.studentId)===String(studentId));
   if(existing){
     existing.score = score;
     existing.time = nowTime();
@@ -72,10 +75,10 @@ function renderWorks(){
 function renderWorksContent(){
   const students = [...getActiveStudents()].sort((a,b)=>(a.listNo||999)-(b.listNo||999));
   const rows = currentWorkRows();
-  const byStudent = new Map(rows.map(r=>[r.studentId,r]));
+  const byStudent = new Map(rows.map(r=>[String(r.studentId),r]));
 
   if(worksTab==='scan'){
-    const history = rows.map(r=>({label:`${r.studentName} — ${LOGROS[r.score].label}`, meta:r.time}));
+    const history = rows.map(r=>({label:`${r.studentName} — ${workAchievement(r.score).label}`, meta:r.time}));
     return `
     <div class="card scanner-panel">
       <div class="row row2">
@@ -100,10 +103,10 @@ function renderWorksContent(){
     return `<div class="card">
       <div class="section-title">Registro manual</div>
       ${students.map(s=>{
-        const cur = byStudent.get(s.id);
+        const cur = byStudent.get(String(s.id));
         return `<div class="item">
-          <div><div class="item-title">${esc(s.name)}</div><div class="item-sub">Lista ${s.listNo} · ${esc(s.qr)}${cur?` · Actual: ${LOGROS[cur.score].label}`:''}</div></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">${[3,2,1,0].map(v=>`<button class="mini" data-manual-work="${s.id}|${v}" style="background:${LOGROS[v].color};color:#fff" ${isExpired()?'disabled':''}>${v}</button>`).join('')}</div>
+          <div><div class="item-title">${esc(s.name)}</div><div class="item-sub">Lista ${s.listNo} · ${esc(s.qr)}${cur?` · Actual: ${workAchievement(cur.score).label}`:''}</div></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">${[3,2,1,0].map(v=>`<button class="mini" data-manual-work="${esc(s.id)}" data-work-score="${v}" style="background:${LOGROS[v].color};color:#fff" ${isExpired()?'disabled':''}>${v}</button>`).join('')}</div>
         </div>`;
       }).join('')}
     </div>`;
@@ -111,14 +114,14 @@ function renderWorksContent(){
 
   return `<div class="card">
     <div class="section-title">Resumen del trabajo</div>
-    ${rows.map(r=>`<div class="item"><div><div class="item-title">${esc(r.studentName)}</div><div class="item-sub">${esc(r.time)}</div></div><span class="badge" style="background:${LOGROS[r.score].color};color:#fff">${LOGROS[r.score].label} (${r.score})</span></div>`).join('') || '<div class="small">Todavía no hay registros.</div>'}
+    ${rows.map(r=>{ const achievement=workAchievement(r.score); return `<div class="item"><div><div class="item-title">${esc(r.studentName)}</div><div class="item-sub">${esc(r.time)}</div></div><span class="badge" style="background:${achievement.color};color:#fff">${achievement.label} (${Number(r.score)||0})</span></div>`; }).join('') || '<div class="small">Todavía no hay registros.</div>'}
   </div>`;
 }
 function bindWorks(){
-  document.getElementById('work-date').onchange = async e => { await worksScanner.stop(); workDate = e.target.value; renderCurrentScreen(); };
+  document.getElementById('work-date').onchange = async e => { await worksScanner.stop(); if(!isIsoDate(e.target.value)){toast('Selecciona una fecha válida');e.target.value=workDate;return;} workDate = e.target.value; renderCurrentScreen(); };
   document.getElementById('work-campo').onchange = async e => { await worksScanner.stop(); workCampo = e.target.value; workAsignatura = (CAMPOS.find(c=>c.campo===workCampo)||CAMPOS[0]).asignaturas[0]; renderCurrentScreen(); };
   document.getElementById('work-asignatura').onchange = async e => { await worksScanner.stop(); workAsignatura = e.target.value; renderCurrentScreen(); };
-  document.getElementById('work-title').oninput = e => { workTitle = e.target.value; sessionStorage.setItem('profeqr_workTitle', workTitle); };
+  document.getElementById('work-title').oninput = e => { workTitle = e.target.value; try{ sessionStorage.setItem('profeqr_workTitle', workTitle); }catch(err){} };
   document.querySelectorAll('[data-score-mode]').forEach(btn=>btn.onclick = ()=>{ workScoreMode = Number(btn.dataset.scoreMode); renderCurrentScreen(); });
   document.querySelectorAll('[data-works-tab]').forEach(btn=>btn.onclick = async ()=>{ await worksScanner.stop(); worksTab = btn.dataset.worksTab; renderCurrentScreen(); });
   document.getElementById('mark-zero-btn').onclick = () => {
@@ -126,10 +129,11 @@ function bindWorks(){
     if(!workTitle.trim()) return toast('Primero escribe el nombre del trabajo');
     const key = currentWorkKey();
     const current = db.group.works.filter(w=>w.key===key);
-    const currentIds = new Set(current.map(w=>w.studentId));
-    const extra = getActiveStudents().filter(s=>!currentIds.has(s.id)).map(s=>({
+    const currentIds = new Set(current.map(w=>String(w.studentId)));
+    const extra = getActiveStudents().filter(s=>!currentIds.has(String(s.id))).map(s=>({
       id:uid(),key,date:workDate,campo:workCampo,asignatura:workAsignatura,title:workTitle,score:0,studentId:s.id,studentName:s.name,listNo:s.listNo,time:nowTime(),source:'AUTO0'
     }));
+    if(!extra.length){ toast('No hay trabajos pendientes por marcar'); return; }
     db.group.works = [...extra, ...db.group.works];
     if(!saveDb()) return;
     toast(`Pendientes marcados como 0: ${extra.length}`);
@@ -138,8 +142,7 @@ function bindWorks(){
   document.querySelectorAll('[data-manual-work]').forEach(btn=>btn.onclick = () => {
     if(!canWrite()) return writeBlockedMessage();
     if(!workTitle.trim()) return toast('Primero escribe el nombre del trabajo');
-    const [sid,score] = btn.dataset.manualWork.split('|');
-    saveOrUpdateWork(sid, Number(score), 'MANUAL');
+    saveOrUpdateWork(btn.dataset.manualWork, Number(btn.dataset.workScore), 'MANUAL');
     renderCurrentScreen();
   });
   const start = document.getElementById('works-scanner-start');
@@ -160,13 +163,14 @@ function handleWorksScan(code){
   if(!s) return {valid:false,status:'QR inválido',name:'Código no reconocido'};
   const result = saveOrUpdateWork(s.id, workScoreMode, 'QR');
   if(result === 'blocked') return {valid:false,status:'Captura bloqueada',name:'Licencia vencida'};
+  if(result === 'missing') return {valid:false,status:'Alumno inactivo',name:s.name};
   const rows = currentWorkRows();
   return {
     valid:true,
     status: result === 'updated' ? 'Actualizado' : 'Registrado',
     statusType: result === 'updated' ? 'primary' : 'ok',
     name:s.name,
-    history: rows.map(r=>({label:`${r.studentName} — ${LOGROS[r.score].label}`, meta:r.time})),
+    history: rows.map(r=>({label:`${r.studentName} — ${workAchievement(r.score).label}`, meta:r.time})),
     counters:{
       'works-count-3': rows.filter(r=>r.score===3).length,
       'works-count-2': rows.filter(r=>r.score===2).length,
@@ -175,4 +179,3 @@ function handleWorksScan(code){
     }
   };
 }
-

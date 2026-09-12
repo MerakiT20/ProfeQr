@@ -11,7 +11,7 @@ function attentionHasAgreement(r){
 }
 function buildAttentionCenterData(monthKey=attentionMonthKey()){
   const students=getActiveStudents();
-  const monthDates=Object.keys(db.group.attendance||{}).filter(d=>String(d).startsWith(monthKey)).sort();
+  const monthDates=attendanceRegisteredDates(db.group.attendance,{start:`${monthKey}-01`,end:`${monthKey}-31`});
   const monthWorks=(db.group.works||[]).filter(w=>String(w.date||'').startsWith(monthKey));
   const assignmentKeys=[...new Set(monthWorks.map(w=>w.key).filter(Boolean))];
   const reports=(db.group.bitacoraReports||[]).map(normalizeBitacoraReport);
@@ -20,15 +20,15 @@ function buildAttentionCenterData(monthKey=attentionMonthKey()){
   const todayKey=today();
 
   const studentsData=students.map(s=>{
-    const presentDates=monthDates.filter(d=>(db.group.attendance[d]||[]).some(row=>row.studentId===s.id));
+    const presentDates=monthDates.filter(d=>(db.group.attendance[d]||[]).some(row=>String(row.studentId)===String(s.id)));
     const absences=Math.max(monthDates.length-presentDates.length,0);
     let pendingWorks=0;
     for(const key of assignmentKeys){
-      const row=monthWorks.find(w=>w.key===key && w.studentId===s.id);
+      const row=monthWorks.find(w=>w.key===key && String(w.studentId)===String(s.id));
       if(!row || Number(row.score)===0) pendingWorks++;
     }
-    const incidents=monthReports.filter(r=>(r.studentIds||[]).includes(s.id)).length;
-    const studentOpen=openReports.filter(r=>(r.studentIds||[]).includes(s.id));
+    const incidents=monthReports.filter(r=>(r.studentIds||[]).some(id=>String(id)===String(s.id))).length;
+    const studentOpen=openReports.filter(r=>(r.studentIds||[]).some(id=>String(id)===String(s.id)));
     const followups=studentOpen.filter(r=>attentionFollowUpDate(r)).length;
     const overdueFollowups=studentOpen.filter(r=>{ const d=attentionFollowUpDate(r); return d && d<todayKey; }).length;
     const overdueAgreements=studentOpen.filter(r=>{ const d=attentionFollowUpDate(r); return attentionHasAgreement(r) && d && d<todayKey; }).length;

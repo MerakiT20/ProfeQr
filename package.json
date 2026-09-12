@@ -1,0 +1,14 @@
+{
+  "name": "profeqr",
+  "version": "8.8.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:syntax": "for f in js/*.js sw.js tests/*.mjs; do node --check \"$f\" || exit 1; done",
+    "test:browser": "node tests/rc-core-10.mjs && node tests/attention-center.mjs && node tests/stability-audit.mjs && node tests/pwa-subpath.mjs",
+    "test": "npm run test:syntax && npm run test:browser"
+  },
+  "devDependencies": {
+    "playwright": "1.55.0"
+  }
+}

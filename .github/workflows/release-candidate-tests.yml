@@ -3,26 +3,27 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  rc-core-10:
+  stable-regression-suite:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22'
       - name: Install Playwright
         run: |
-          npm init -y >/dev/null 2>&1
-          npm install --no-save playwright@1.55.0
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
       - name: Static syntax checks
-        run: |
-          for f in js/*.js sw.js tests/*.mjs; do node --check "$f"; done
+        run: npm run test:syntax
       - name: Verify critical release assets
         run: |
           test -f vendor/pdfjs/pdf.mjs
@@ -35,7 +36,10 @@ jobs:
           grep -q "mergeImportedStudents" js/students.js
           grep -q "renderPdfInsideApp" js/documents.js
           grep -q "buildAttentionCenterData" js/attention.js
+          grep -q "documentsReplaceAll" js/documents.js
+          grep -q "profeqr-v8-8-stable" sw.js
           ! grep -q '<iframe src="${documentsObjectUrl}"' js/documents.js
+          ! grep -Eq 'https?://' sw.js
       - name: Start local ProfeQr server
         run: |
           python3 -m http.server 4173 --bind 127.0.0.1 > /tmp/profeqr-server.log 2>&1 &
@@ -44,9 +48,7 @@ jobs:
           cat /tmp/profeqr-server.log
           exit 1
       - name: Run browser release-candidate tests
-        run: |
-          node tests/rc-core-10.mjs
-          node tests/attention-center.mjs
+        run: npm run test:browser
       - name: Server log on failure
         if: failure()
         run: cat /tmp/profeqr-server.log || true

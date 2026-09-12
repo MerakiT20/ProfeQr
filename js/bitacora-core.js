@@ -24,11 +24,11 @@ const BIT_OPTS = {
   tiposB:['desobediencia','interrupción reiterada','lenguaje inapropiado','incumplimiento de actividad','uso indebido de celular','salida del aula sin autorización','daño menor a material','falta de respeto','conflicto menor sin lesión','otra'],
   reincidencia:['primera vez','segunda vez','recurrente'],
   medidasB:['diálogo formativo','llamado de atención','cambio temporal de lugar','reparación del daño','carta compromiso','actividad de reflexión','notificación a tutor','seguimiento semanal','otra'],
-  escalamientoB:['lesión','amenaza','acoso reiterado','humillación','ciberacoso','violencia sexual','discriminación grave','arma','riesgo físico o emocional'],
+  escalamientoB:['lesión','amenaza','acoso reiterado','humillación','conducta digital grave','situación sexual que requiere protocolo','discriminación grave','arma','riesgo físico o emocional'],
   motivosC:['enfermedad','situación familiar','traslado','falta de recursos','trabajo o apoyo familiar','desinterés','seguridad','no se logró contactar','otro'],
   mediosContacto:['llamada','WhatsApp/mensaje','citatorio','entrevista presencial','visita o canal institucional','no se logró contacto','otro'],
   riesgoC:['bajo','medio','alto'],
-  estatus:['abierto','en seguimiento','cerrado','canalizado']
+  estatus:['abierto','en seguimiento','canalizado']
 };
 function bitacoraFolio(){
   db.group.bitacoraMeta = db.group.bitacoraMeta || {schemaVersion:1, folioSeq:0};
@@ -37,7 +37,7 @@ function bitacoraFolio(){
 }
 function bitTypeName(t){ return ({A:'Ruta A: violencia e incidencias',B:'Ruta B: indisciplina e incumplimiento',C:'Ruta C: inasistencias',CIT:'Citatorio'})[t]||t; }
 function activeStudentOptions(selected=''){
-  return `<option value="">— Seleccionar alumno —</option>` + getActiveStudents().map(s=>`<option value="${s.id}" ${selected===s.id?'selected':''}>${esc(s.listNo)} · ${esc(s.name)}</option>`).join('');
+  return `<option value="">— Seleccionar alumno —</option>` + getActiveStudents().map(s=>`<option value="${esc(s.id)}" ${String(selected)===String(s.id)?'selected':''}>${esc(s.listNo)} · ${esc(s.name)}</option>`).join('');
 }
 function bitInput(id,label,value='',placeholder='',type='text',required=false){ return `<div><div class="small">${label}${required?' *':''}</div><input id="${id}" type="${type}" value="${esc(value||'')}" placeholder="${esc(placeholder)}"></div>`; }
 function bitText(id,label,value='',placeholder='',required=false,rows=4,dictate=false){ return `<div class="field"><div class="small">${label}${required?' *':''}</div><textarea id="${id}" rows="${rows}" placeholder="${esc(placeholder)}">${esc(value||'')}</textarea>${dictate?micBtn(id):''}</div>`; }
@@ -182,7 +182,7 @@ function bitRiskAlert(flags=[]){
 }
 function shouldEscalateB(flags=[]){ return (flags||[]).length>0; }
 function getAbsenceRiskC(data={}){
-  const total=(data.c_absences_auto||[]).length; const noResp=!!data.c_no_response || data.c_contact_medium==='no se logró contacto';
+  const total=(data.c_absences_auto||[]).length; const noResp=isAffirmativeChoice(data.c_no_response) || isNoContactChoice(data.c_contact_medium);
   if(total>=5 || noResp || data.c_risk==='alto') return 'rojo';
   if(total>=3 || data.c_risk==='medio') return 'amarillo';
   return 'verde';

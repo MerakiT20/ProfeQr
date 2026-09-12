@@ -72,6 +72,11 @@ function normalizeCct(v){
   return String(v||'').toUpperCase().replace(/\s+/g,'').trim();
 }
 
+function localDate(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function expiryForCycle(cycle){
   const value=String(cycle||'').trim();
   const match=/^(\d{4})-(\d{4})$/.exec(value);
@@ -112,7 +117,7 @@ document.getElementById('generate').onclick=async()=>{
       cct,
       cycle,
       school:document.getElementById('school').value.trim(),
-      issuedAt:new Date().toISOString().slice(0,10),
+      issuedAt:localDate(),
       expiresAt
     };
     const bytes=new TextEncoder().encode(JSON.stringify(payload));
@@ -131,9 +136,16 @@ document.getElementById('generate').onclick=async()=>{
 document.getElementById('copy').onclick=async()=>{
   const v=document.getElementById('output').value;
   if(!v)return;
-  await navigator.clipboard.writeText(v);
-  document.getElementById('status').className='ok';
-  document.getElementById('status').textContent='Licencia copiada.';
+  const status=document.getElementById('status');
+  try{
+    await navigator.clipboard.writeText(v);
+    status.className='ok';
+    status.textContent='Licencia copiada.';
+  }catch(e){
+    document.getElementById('output').select();
+    status.className='bad';
+    status.textContent='No se pudo copiar automáticamente. La licencia quedó seleccionada para copiarla manualmente.';
+  }
 };
 </script>
 </body>

@@ -1,11 +1,10 @@
 /* --- Reports --- */
 function attendanceReportData(range){
   const students = [...getActiveStudents()].sort((a,b)=>(a.listNo||999)-(b.listNo||999));
-  const allDates = Object.keys(db.group.attendance).sort();
-  const dates = allDates.filter(d=>(!range.start||d>=range.start)&&(!range.end||d<=range.end));
+  const dates = attendanceRegisteredDates(db.group.attendance,range);
   const general = students.map(s=>{
     const row = {LISTA:s.listNo,NOMBRE:s.name};
-    dates.forEach(d=>row[d]=(db.group.attendance[d]||[]).some(r=>r.studentId===s.id)?1:0);
+    dates.forEach(d=>row[d]=(db.group.attendance[d]||[]).some(r=>String(r.studentId)===String(s.id))?1:0);
     row.ASISTENCIAS = dates.reduce((acc,d)=>acc+(row[d]||0),0);
     row.FALTAS = dates.length - row.ASISTENCIAS;
     row.PORCENTAJE = dates.length ? `${Math.round((row.ASISTENCIAS/dates.length)*100)}%` : '0%';
@@ -13,39 +12,54 @@ function attendanceReportData(range){
   });
   const faltas = [...general].map(r=>({LISTA:r.LISTA,NOMBRE:r.NOMBRE,FALTAS:r.FALTAS,ASISTENCIAS:r.ASISTENCIAS,PORCENTAJE:r.PORCENTAJE}));
   const orden = [...faltas].sort((a,b)=>b.FALTAS-a.FALTAS||a.NOMBRE.localeCompare(b.NOMBRE));
-  const base = dates.map(d=>{ const pres=(db.group.attendance[d]||[]).length; return {FECHA:d,ASISTENCIAS:pres,FALTAS:Math.max(students.length-pres,0),TOTAL:students.length}; });
+  const activeIds=new Set(students.map(s=>String(s.id)));
+  const base = dates.map(d=>{ const pres=new Set((db.group.attendance[d]||[]).map(r=>String(r.studentId)).filter(id=>activeIds.has(id))).size; return {FECHA:d,ASISTENCIAS:pres,FALTAS:Math.max(students.length-pres,0),TOTAL:students.length}; });
   return {general,faltas,orden,base};
 }
 function worksReportData(range){
   const works = db.group.works.filter(w=>(!range.start||w.date>=range.start)&&(!range.end||w.date<=range.end));
-  const detalle = works.map(w=>({FECHA:w.date,LISTA:w.listNo,ALUMNO:w.studentName,CAMPO_FORMATIVO:w.campo,ASIGNATURA:w.asignatura,TRABAJO:w.title,PUNTAJE:w.score,HORA:w.time}));
+  const records=works.map(w=>{
+    const student=findStudent(w.studentId);
+    return {studentKey:String(w.studentId||`${w.listNo}__${normalizeStudentNameForMatch(w.studentName)}`),workKey:String(w.key||`${w.date}__${w.campo}__${w.asignatura}__${w.title}`),FECHA:w.date,LISTA:student?.listNo??w.listNo,ALUMNO:student?.name||w.studentName,CAMPO_FORMATIVO:w.campo,ASIGNATURA:w.asignatura,TRABAJO:w.title,PUNTAJE:Number(w.score),HORA:w.time};
+  });
+  const detalle = records.map(({studentKey,workKey,...row})=>row);
   const base = [...detalle].sort((a,b)=>a.FECHA.localeCompare(b.FECHA)||a.ASIGNATURA.localeCompare(b.ASIGNATURA)||a.LISTA-b.LISTA);
-  const resumenAlumnos = [];
-  detalle.forEach(d=>{
-    let item = resumenAlumnos.find(x=>x.LISTA===d.LISTA&&x.ALUMNO===d.ALUMNO);
-    if(!item){ item = {LISTA:d.LISTA,ALUMNO:d.ALUMNO,TOTAL_PUNTOS:0,REGISTROS:0,PROMEDIO:0}; resumenAlumnos.push(item); }
+  const studentsById = new Map();
+  records.forEach(d=>{
+    let item = studentsById.get(d.studentKey);
+    if(!item){ item = {LISTA:d.LISTA,ALUMNO:d.ALUMNO,TOTAL_PUNTOS:0,REGISTROS:0,PROMEDIO:0}; studentsById.set(d.studentKey,item); }
     item.TOTAL_PUNTOS += Number(d.PUNTAJE||0);
     item.REGISTROS += 1;
     item.PROMEDIO = (item.TOTAL_PUNTOS/item.REGISTROS).toFixed(2);
   });
-  const resumenTrabajos = [];
-  detalle.forEach(d=>{
-    let item = resumenTrabajos.find(x=>x.TRABAJO===d.TRABAJO&&x.ASIGNATURA===d.ASIGNATURA);
-    if(!item){ item = {TRABAJO:d.TRABAJO,ASIGNATURA:d.ASIGNATURA,EXCELENTE:0,COMPLETO:0,INCOMPLETO:0,NO_ENTREGADO:0,PROMEDIO:0,_sum:0,_n:0}; resumenTrabajos.push(item); }
+  const worksByKey = new Map();
+  records.forEach(d=>{
+    let item = worksByKey.get(d.workKey);
+    if(!item){ item = {FECHA:d.FECHA,TRABAJO:d.TRABAJO,CAMPO_FORMATIVO:d.CAMPO_FORMATIVO,ASIGNATURA:d.ASIGNATURA,EXCELENTE:0,COMPLETO:0,INCOMPLETO:0,NO_ENTREGADO:0,PROMEDIO:0,_sum:0,_n:0}; worksByKey.set(d.workKey,item); }
     if(d.PUNTAJE===3)item.EXCELENTE++; else if(d.PUNTAJE===2)item.COMPLETO++; else if(d.PUNTAJE===1)item.INCOMPLETO++; else item.NO_ENTREGADO++;
     item._sum += Number(d.PUNTAJE||0);
     item._n += 1;
     item.PROMEDIO = (item._sum/item._n).toFixed(2);
   });
-  const limpio = resumenTrabajos.map(({_sum,_n,...r})=>r);
+  const resumenAlumnos=[...studentsById.values()].sort((a,b)=>Number(a.LISTA)-Number(b.LISTA)||String(a.ALUMNO).localeCompare(String(b.ALUMNO)));
+  const limpio = [...worksByKey.values()].map(({_sum,_n,...r})=>r).sort((a,b)=>String(a.FECHA).localeCompare(String(b.FECHA))||String(a.TRABAJO).localeCompare(String(b.TRABAJO)));
   return {detalle,base,resumenAlumnos,resumenTrabajos:limpio};
+}
+
+function monthDateRange(month=''){
+  const match=/^(\d{4})-(\d{2})$/.exec(String(month));
+  if(!match) return {start:'',end:''};
+  const year=Number(match[1]),monthNumber=Number(match[2]);
+  if(monthNumber<1||monthNumber>12) return {start:'',end:''};
+  const lastDay=new Date(year,monthNumber,0).getDate();
+  return {start:`${match[1]}-${match[2]}-01`,end:`${match[1]}-${match[2]}-${String(lastDay).padStart(2,'0')}`};
 }
 
 
 // CDN GUARD: verificar XLSX antes de exportar
 function checkXLSX(){
   if(typeof XLSX === 'undefined'){
-    toast('Librería Excel no cargada. Conéctate a internet y recarga.');
+    toast('No se pudo cargar el componente local de Excel. Recarga la aplicación.');
     return false;
   }
   return true;
@@ -133,10 +147,10 @@ function renderReportsContent(){
   </div>`;
 }
 function renderInternalReports(){
-  const students = [...db.group.students].sort((a,b)=>(a.listNo||999)-(b.listNo||999));
-  const attRows = Object.values(db.group.attendance).flat();
-  const attDates = [...new Set(attRows.map(r=>r.date))];
-  const todayAtt = (db.group.attendance[today()]||[]).length;
+  const students = [...getActiveStudents()].sort((a,b)=>(a.listNo||999)-(b.listNo||999));
+  const attDates = attendanceRegisteredDates();
+  const activeIds=new Set(students.map(s=>String(s.id)));
+  const todayAtt = new Set((db.group.attendance[today()]||[]).map(r=>String(r.studentId)).filter(id=>activeIds.has(id))).size;
   return `
   <div class="card">
     <div class="section-title">Resumen General</div>
@@ -145,7 +159,7 @@ function renderInternalReports(){
         <div class="small">Selecciona un alumno</div>
         <select id="internal-student-select">
           <option value="">Seleccionar alumno</option>
-          ${students.map(s=>`<option value="${s.id}">Lista ${s.listNo} · ${esc(s.name)}</option>`).join('')}
+          ${students.map(s=>`<option value="${esc(s.id)}">Lista ${esc(s.listNo)} · ${esc(s.name)}</option>`).join('')}
         </select>
         <div id="internal-student-card" class="help">Aquí podrás ver cuántas faltas y trabajos tiene un alumno en específico.</div>
       </div>
@@ -174,18 +188,18 @@ function bindReports(){
   if(reportsTab === 'internal'){
     const sel = document.getElementById('internal-student-select');
     if(sel) sel.onchange = () => {
-      const s = db.group.students.find(x=>x.id===sel.value);
+      const s = db.group.students.find(x=>String(x.id)===String(sel.value));
       const card = document.getElementById('internal-student-card');
       if(!s){
         card.className='help';
         card.innerHTML='Aquí podrás ver cuántas faltas y trabajos tiene un alumno en específico.';
         return;
       }
-      const attRows = Object.values(db.group.attendance).flat().filter(r=>r.studentId===s.id);
-      const uniqueDates = [...new Set(attRows.map(r=>r.date))];
-      const totalDays = [...new Set(Object.values(db.group.attendance).flat().map(r=>r.date))].length;
-      const works = db.group.works.filter(w=>w.studentId===s.id);
-      const bitas = (db.group.bitacoraReports||[]).filter(r=>(r.studentIds||[]).includes(s.id));
+      const registeredDates=attendanceRegisteredDates();
+      const uniqueDates = registeredDates.filter(date=>(db.group.attendance[date]||[]).some(r=>String(r.studentId)===String(s.id)));
+      const totalDays = registeredDates.length;
+      const works = db.group.works.filter(w=>String(w.studentId)===String(s.id));
+      const bitas = (db.group.bitacoraReports||[]).filter(r=>(r.studentIds||[]).some(id=>String(id)===String(s.id)));
       const totalPoints = works.reduce((a,b)=>a+Number(b.score||0),0);
       card.className='';
       card.innerHTML = `
@@ -209,13 +223,12 @@ function bindReports(){
 
   if(reportsTab === 'attendance'){
     document.getElementById('att-export-btn').onclick = () => {
+      if(!checkXLSX()) return;
       const month = document.getElementById('att-r-month').value;
       let start = document.getElementById('att-r-from').value;
       let end = document.getElementById('att-r-to').value;
       if(month){
-        const [y,m] = month.split('-').map(Number);
-        start = new Date(y,m-1,1).toISOString().slice(0,10);
-        end = new Date(y,m,0).toISOString().slice(0,10);
+        ({start,end}=monthDateRange(month));
       }
       const data = attendanceReportData({start,end});
       const wb = XLSX.utils.book_new();
@@ -228,20 +241,19 @@ function bindReports(){
       XLSX.utils.book_append_sheet(wb,ws2,'CONCENTRADO GENERAL');
       XLSX.utils.book_append_sheet(wb,ws3,'ORDEN FALTAS');
       XLSX.utils.book_append_sheet(wb,ws4,'BASE GRAFICAS');
-      XLSX.writeFile(wb,`ProfeQr_Asistencia_${db.config.group}_${month||'reporte'}.xlsx`);
+      XLSX.writeFile(wb,safeFileName(`ProfeQr_Asistencia_${db.config.group}_${month||'reporte'}.xlsx`));
       toast('Reporte de asistencia exportado');
     };
   }
 
   if(reportsTab === 'works'){
     document.getElementById('works-export-btn').onclick = () => {
+      if(!checkXLSX()) return;
       const month = document.getElementById('works-r-month').value;
       let start = document.getElementById('works-r-from').value;
       let end = document.getElementById('works-r-to').value;
       if(month){
-        const [y,m] = month.split('-').map(Number);
-        start = new Date(y,m-1,1).toISOString().slice(0,10);
-        end = new Date(y,m,0).toISOString().slice(0,10);
+        ({start,end}=monthDateRange(month));
       }
       const data = worksReportData({start,end});
       const wb = XLSX.utils.book_new();
@@ -254,7 +266,7 @@ function bindReports(){
       XLSX.utils.book_append_sheet(wb,ws2,'BASE ORDENADA');
       XLSX.utils.book_append_sheet(wb,ws3,'RESUMEN POR ALUMNO');
       XLSX.utils.book_append_sheet(wb,ws4,'RESUMEN POR TRABAJO');
-      XLSX.writeFile(wb,`ProfeQr_Trabajos_${db.config.group}_${month||'reporte'}.xlsx`);
+      XLSX.writeFile(wb,safeFileName(`ProfeQr_Trabajos_${db.config.group}_${month||'reporte'}.xlsx`));
       toast('Reporte de trabajos exportado');
     };
   }
@@ -263,8 +275,9 @@ function mountCharts(){
   const attCanvas = document.getElementById('att-chart');
   const worksCanvas = document.getElementById('works-chart');
   if(attCanvas){
-    const dates = Object.keys(db.group.attendance).sort();
-    const values = dates.map(d=>(db.group.attendance[d]||[]).length);
+    const dates = attendanceRegisteredDates();
+    const activeIds=new Set(getActiveStudents().map(s=>String(s.id)));
+    const values = dates.map(d=>new Set((db.group.attendance[d]||[]).map(r=>String(r.studentId)).filter(id=>activeIds.has(id))).size);
     if(attChart) attChart.destroy();
     attChart = new Chart(attCanvas, {
       type:'bar',
@@ -286,4 +299,3 @@ function mountCharts(){
     });
   }
 }
-

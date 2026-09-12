@@ -1,5 +1,6 @@
 /* --- Students --- */
 function downloadStudentTemplate(){
+  if(!checkXLSX()) return;
   const wb = XLSX.utils.book_new();
   const captura = Array.from({length:50},(_,i)=>({'No. Lista':i+1,'Nombre completo':''}));
   const instrucciones = [
@@ -34,25 +35,45 @@ function mergeImportedStudents(importedRows){
     }
   });
 
+  const normalizedRows = importedRows.map(row=>({
+    listNo:Number(row.listNo),
+    name:String(row.name||'').trim()
+  })).filter(row=>row.name || row.listNo);
   const seenListNos = new Set();
+  normalizedRows.forEach(row=>{
+    if(!Number.isInteger(row.listNo) || row.listNo<=0 || !row.name) throw new Error('Cada alumno debe tener un número de lista entero y un nombre.');
+    if(seenListNos.has(row.listNo)) throw new Error(`El número de lista ${row.listNo} está repetido en la plantilla.`);
+    seenListNos.add(row.listNo);
+  });
+
+  // La identidad histórica se decide primero por nombre. Si se hiciera primero
+  // por número de lista, intercambiar dos números también intercambiaría todo
+  // el historial de asistencia, trabajos y bitácora entre ambos alumnos.
+  const matches = new Map();
+  const reservedIds = new Set();
+  normalizedRows.forEach((row,index)=>{
+    const candidates=(byName.get(normalizeStudentNameForMatch(row.name))||[]).filter(st=>!reservedIds.has(st.id));
+    const sameList=candidates.find(st=>Number(st.listNo)===row.listNo);
+    const match=sameList || (candidates.length===1 ? candidates[0] : null);
+    if(match){ matches.set(index,match); reservedIds.add(match.id); }
+  });
+  normalizedRows.forEach((row,index)=>{
+    if(matches.has(index)) return;
+    const sameList=byListNo.get(row.listNo);
+    if(sameList && !reservedIds.has(sameList.id)){
+      matches.set(index,sameList);
+      reservedIds.add(sameList.id);
+    }
+  });
+
   const seenIds = new Set();
   const merged = [];
   let preserved = 0, created = 0, reactivated = 0, renamed = 0;
 
-  for(const row of importedRows){
-    const listNo = Number(row.listNo)||0;
-    const name = String(row.name||'').trim();
-    if(!listNo || !name) continue;
-    if(seenListNos.has(listNo)) throw new Error(`El número de lista ${listNo} está repetido en la plantilla.`);
-    seenListNos.add(listNo);
-
+  normalizedRows.forEach((row,index)=>{
+    const {listNo,name}=row;
     const nameKey = normalizeStudentNameForMatch(name);
-    let match = byListNo.get(listNo) || null;
-    if(match && seenIds.has(match.id)) match = null;
-    if(!match){
-      const sameName = (byName.get(nameKey)||[]).filter(st=>!seenIds.has(st.id));
-      if(sameName.length === 1) match = sameName[0];
-    }
+    const match = matches.get(index)||null;
 
     if(match){
       seenIds.add(match.id);
@@ -64,7 +85,7 @@ function mergeImportedStudents(importedRows){
       created++;
       merged.push({id:uid(), listNo, name, active:true, qr:qrCodeFor(db.config.group, listNo)});
     }
-  }
+  });
 
   // Los alumnos que ya existían y no aparecen en la nueva plantilla se conservan
   // como inactivos. Así sus IDs y todo el historial relacionado permanecen válidos.
@@ -108,7 +129,7 @@ function renderStudents(){
       ${students.map(s=>`
         <div class="item student-row" data-filter="${esc(`${s.name} ${s.listNo} ${s.qr}`)}">
           <div><div class="item-title">${esc(s.name)}</div><div class="item-sub">Lista ${s.listNo} · ${esc(s.qr)} · ${s.active===false?'Inactivo':'Activo'}</div></div>
-          <button class="mini" data-toggle-student-status="${s.id}" ${isExpired()?'disabled':''}>${s.active===false?'Reactivar':'Suspender'}</button>
+          <button class="mini" data-toggle-student-status="${esc(s.id)}" ${isExpired()?'disabled':''}>${s.active===false?'Reactivar':'Suspender'}</button>
         </div>`).join('')}
       ${students.length===0 ? '<div class="small">Todavía no hay alumnos.</div>' : ''}
     </div>
@@ -197,4 +218,3 @@ function bindStudents(){
     });
   };
 }
-
