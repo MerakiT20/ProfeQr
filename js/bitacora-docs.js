@@ -67,7 +67,7 @@ function buildBitacoraDocument(r){
         `Conducta observable: ${bitNA(d.b_conduct)}`,
         `Norma, acuerdo o indicación incumplida: ${bitNA(d.b_rule)}`,
         `Indicadores que podrían requerir escalamiento a Ruta A: ${bitNA(d.b_escalate,'No marcados')}`,
-        (Array.isArray(d.b_escalate)&&d.b_escalate.length) ? 'Aviso: si existe lesión, amenaza, acoso reiterado, ciberacoso, violencia sexual, arma o riesgo físico/emocional, este caso debe valorarse como Ruta A.' : 'No se activó sugerencia automática de escalamiento.'
+        (Array.isArray(d.b_escalate)&&d.b_escalate.length) ? 'Aviso: los indicadores marcados exceden una incidencia formativa menor; el caso debe valorarse mediante Ruta A y el protocolo escolar aplicable.' : 'No se activó sugerencia automática de escalamiento.'
       ].join('\n')),
       bitSection('3. CONTEXTO Y ANTECEDENTES', [
         `Reincidencia: ${bitNA(d.b_repeat)}`,
@@ -89,7 +89,7 @@ function buildBitacoraDocument(r){
         `Compromiso familiar/tutor: ${bitNA(d.b_family,'No aplica')}`,
         `Fecha de seguimiento: ${bitNA(d.b_followup_date)}`,
         `Responsable del seguimiento: ${bitNA(d.b_followup_responsible)}`,
-        'Nota: esta ruta documenta una intervención educativa formativa. No usa lenguaje de víctima, agresor, receptor o generador.'
+        'Nota: esta ruta documenta una intervención educativa formativa mediante hechos observables, acuerdos y seguimiento.'
       ].join('\n'))
     ].join('\n');
   }
@@ -185,22 +185,24 @@ function bindBitacoraPreview(){
 }
 function saveBitacoraDraft(format='none'){
   if(!canWrite()) return writeBlockedMessage();
-  db.group.bitacoraReports=db.group.bitacoraReports||[]; const idx=db.group.bitacoraReports.findIndex(r=>r.id===bitacoraDraft.id);
+  db.group.bitacoraReports=db.group.bitacoraReports||[]; const idx=db.group.bitacoraReports.findIndex(r=>String(r.id)===String(bitacoraDraft.id));
   if(idx>=0){
     const existing=normalizeBitacoraReport(db.group.bitacoraReports[idx]);
     if(buildReportStatus(existing)==='cerrado') return toast('El acta está cerrada. Reábrela antes de modificarla.');
     appendBitacoraVersion(existing,'antes de edición'); bitacoraDraft.versions=existing.versions; bitacoraDraft.auditTrail=existing.auditTrail;
   }
-  if(bitacoraDraft.status==='borrador') bitacoraDraft.status=bitacoraOperationalStatus(bitacoraDraft);
+  if(buildReportStatus(bitacoraDraft)!=='cerrado') setBitacoraOperationalStatus(bitacoraDraft,bitacoraOperationalStatus(bitacoraDraft));
   refreshBitacoraComputedFields(bitacoraDraft); appendBitacoraAudit(bitacoraDraft,idx>=0?'actualizado':'guardado',idx>=0?'Cambios guardados en la revisión actual':'Primer guardado final');
   if(idx>=0) db.group.bitacoraReports[idx]=cloneBitacoraValue(bitacoraDraft); else db.group.bitacoraReports.unshift(cloneBitacoraValue(bitacoraDraft));
+  db.group.bitacoraMeta=db.group.bitacoraMeta||{schemaVersion:1,folioSeq:0};
+  db.group.bitacoraMeta.folioSeq=Math.max(Number(db.group.bitacoraMeta.folioSeq)||0,extractBitacoraFolioSeq(bitacoraDraft));
   if(!saveDb()) return; const saved=cloneBitacoraValue(bitacoraDraft); wizDraftClear(); bitacoraDraft=null; toast('Bitácora guardada'); if(format==='pdf') downloadBitacoraPdf(saved); if(format==='word') downloadBitacoraWord(saved); currentScreen='bitacora'; renderCurrentScreen();
 }
-function openBitacoraReport(id){ const r=(db.group.bitacoraReports||[]).find(x=>x.id===id); if(!r) return; bitacoraDraft=cloneBitacoraValue(normalizeBitacoraReport(r)); bitacoraStep=(BIT_STEPS[r.type]||[]).length-1; currentScreen='bitacoraPreview'; renderCurrentScreen(); }
+function openBitacoraReport(id){ const r=(db.group.bitacoraReports||[]).find(x=>String(x.id)===String(id)); if(!r) return; bitacoraDraft=cloneBitacoraValue(normalizeBitacoraReport(r)); bitacoraStep=(BIT_STEPS[r.type]||[]).length-1; currentScreen='bitacoraPreview'; renderCurrentScreen(); }
 function downloadBitacoraPdf(r){
   if(!r) return;
   const text=r.documentText||buildBitacoraDocument(r);
-  const name=`${r.folio}_${bitTypeName(r.type).replace(/\s+/g,'_')}.pdf`;
+  const name=safeFileName(`${r.folio}_${bitTypeName(r.type).replace(/\s+/g,'_')}.pdf`);
   // FIX v4: robust jsPDF detection (CDN puede exponerlo de distintas formas)
   const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
   if(!jsPDFCtor){ downloadTextFile(name.replace('.pdf','.txt'), text); toast('jsPDF no disponible. Descargando como texto.'); return; }
@@ -249,19 +251,19 @@ function downloadBitacoraWord(r){
   const raw = r.documentText||buildBitacoraDocument(r);
   const title = buildBitacoraTitle(r.type);
   const htmlText = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${r.folio}</title>
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.folio)}</title>
   <style>body{font-family:Arial,Helvetica,sans-serif;font-size:12pt;line-height:1.45;color:#111} h1{font-size:15pt;text-align:center} .meta{font-size:10pt;color:#444}</style></head>
-  <body><h1>${title}</h1><div class="meta">Folio ${r.folio} · Generado desde ProfeQr Bitácora</div><hr>${htmlText}</body></html>`;
+  <body><h1>${esc(title)}</h1><div class="meta">Folio ${esc(r.folio)} · Generado desde ProfeQr Bitácora</div><hr>${htmlText}</body></html>`;
   // FIX v4: blob para mejor compatibilidad
   try {
     const blob = new Blob([html], {type:'application/msword;charset=utf-8'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `${r.folio}_editable.doc`; a.target = '_blank';
+    a.href = url; a.download = safeFileName(`${r.folio}_editable.doc`); a.target = '_blank';
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 2000);
     toast('Documento Word descargado.');
-  } catch(e) { downloadTextFile(`${r.folio}_word_editable.doc`, html, 'application/msword;charset=utf-8'); }
+  } catch(e) { downloadTextFile(safeFileName(`${r.folio}_word_editable.doc`), html, 'application/msword;charset=utf-8'); }
 }
 function renderBitacoraReportExport(){
   const all=(db.group.bitacoraReports||[]).map(normalizeBitacoraReport); const s=bitacoraSummary(all);
@@ -300,10 +302,10 @@ function bitacoraRowsForExport(start='', end=''){
       REPORTA:r.reporter?.name||'',
       CARACTER_REPORTA:r.reporter?.role||'',
       OBSERVACION_DIRECTA:r.reporter?.source||'',
-      TUTOR_NOTIFICADO:(r.data?.a_notice_tutor||r.data?.b_notice_tutor||r.data?.c_contact_medium||'')?'sí':'',
+      TUTOR_NOTIFICADO:bitacoraTutorNotificationStatus(r),
       MEDIO_NOTIFICACION:r.data?.a_notice_medium||r.data?.c_contact_medium||'',
-      CANALIZACION:(r.data?.a_channel||r.data?.c_channel||'')?'sí':'',
-      INSTANCIA:Array.isArray(r.data?.a_channel)?r.data.a_channel.join('; '):(r.data?.c_channel||''),
+      CANALIZACION:hasBitacoraChannel(r)?'sí':'no',
+      INSTANCIA:hasBitacoraChannel(r)?(Array.isArray(r.data?.a_channel)?r.data.a_channel.join('; '):(r.data?.c_channel||'')):'',
       SEGUIMIENTO_PROGRAMADO:fu?'sí':'no',
       FECHA_SEGUIMIENTO:fu,
       SEGUIMIENTO_VENCIDO:isBitacoraOverdue(r)?'sí':'no',
@@ -318,6 +320,7 @@ function bitacoraRowsForExport(start='', end=''){
 }
 function bindBitacoraReportExport(){
   const exp=document.getElementById('bit-export-xlsx'); if(exp) exp.onclick=()=>{
+    if(!checkXLSX()) return;
     const rows=bitacoraRowsForExport(valOf('bit-r-from'),valOf('bit-r-to'));
     const wb=XLSX.utils.book_new(); const ws=XLSX.utils.json_to_sheet(rows); styleSheet(ws); XLSX.utils.book_append_sheet(wb,ws,'BITACORA_SEGUIMIENTO'); XLSX.writeFile(wb,`ProfeQr_Bitacora_Seguimiento_${today()}.xlsx`); toast('Bitácora exportada');
   };
@@ -351,4 +354,3 @@ document.addEventListener('visibilitychange', () => {
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 }
-

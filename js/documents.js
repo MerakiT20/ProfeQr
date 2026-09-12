@@ -71,6 +71,24 @@ async function documentsClear(){
     tx.onerror=()=>{ idb.close(); reject(tx.error); };
   });
 }
+async function documentsReplaceAll(records=[]){
+  const {idb,tx}=await documentsTx('readwrite');
+  return new Promise((resolve,reject)=>{
+    let operationError=null,settled=false;
+    const finishError=error=>{ if(settled)return; settled=true; idb.close(); reject(error||new Error('No se pudieron restaurar los documentos')); };
+    tx.oncomplete=()=>{ if(settled)return; settled=true; idb.close(); resolve(records.length); };
+    tx.onabort=()=>finishError(operationError||tx.error);
+    tx.onerror=()=>{};
+    try{
+      const store=tx.objectStore(PROFEQR_FILES_STORE);
+      store.clear();
+      records.forEach(record=>store.put(record));
+    }catch(error){
+      operationError=error;
+      try{ tx.abort(); }catch(abortError){ finishError(operationError); }
+    }
+  });
+}
 function documentsHumanSize(n){
   const v=Number(n)||0; if(v<1024) return `${v} B`; if(v<1024*1024) return `${(v/1024).toFixed(1)} KB`; return `${(v/1024/1024).toFixed(1)} MB`;
 }
@@ -82,7 +100,7 @@ async function documentsStorageSummary(){
   return {count:docs.length,used,quota,usage};
 }
 function renderDocuments(){
-  return `<div class="card"><div class="section-title">Documentos escolares</div><div class="help">Archivos locales para consulta rápida. PDF e imágenes quedan guardados en este dispositivo y funcionan sin conexión.</div><div class="tabs" style="margin-top:10px">${[['todos','Todos'],...Object.entries(DOC_CATEGORIES).map(([k,v])=>[k,v.label])].map(([k,l])=>`<button class="tab ${documentsCategory===k?'active':''}" data-doc-category="${k}">${esc(l)}</button>`).join('')}</div><div class="row row2" style="margin-top:10px"><label class="btn primary" style="display:grid;place-items:center"><input id="documents-file-input" type="file" accept="application/pdf,image/*" style="display:none" ${isExpired()?'disabled':''}>+ Agregar archivo</label><select id="documents-upload-category" ${isExpired()?'disabled':''}>${Object.entries(DOC_CATEGORIES).map(([k,v])=>`<option value="${k}" ${documentsCategory===k?'selected':''}>${esc(v.label)}</option>`).join('')}</select></div><div id="documents-storage" class="help" style="margin-top:8px">Calculando almacenamiento...</div></div><div id="documents-list"><div class="card"><div class="small">Cargando documentos...</div></div></div>`;
+  return `<div class="card"><div class="section-title">Documentos escolares</div><div class="help">Archivos locales para consulta rápida. PDF e imágenes quedan guardados en este dispositivo y funcionan sin conexión.</div><div class="tabs" style="margin-top:10px">${[['todos','Todos'],...Object.entries(DOC_CATEGORIES).map(([k,v])=>[k,v.label])].map(([k,l])=>`<button class="tab ${documentsCategory===k?'active':''}" data-doc-category="${k}">${esc(l)}</button>`).join('')}</div><div class="row row2" style="margin-top:10px"><label class="btn primary" style="display:grid;place-items:center"><input id="documents-file-input" type="file" accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg" style="display:none" ${isExpired()?'disabled':''}>+ Agregar archivo</label><select id="documents-upload-category" ${isExpired()?'disabled':''}>${Object.entries(DOC_CATEGORIES).map(([k,v])=>`<option value="${k}" ${documentsCategory===k?'selected':''}>${esc(v.label)}</option>`).join('')}</select></div><div id="documents-storage" class="help" style="margin-top:8px">Calculando almacenamiento...</div></div><div id="documents-list"><div class="card"><div class="small">Cargando documentos...</div></div></div>`;
 }
 async function renderDocumentsList(){
   const host=document.getElementById('documents-list'); if(!host) return;
@@ -112,7 +130,10 @@ function bindDocuments(){
 async function storeDocumentFile(file,category){
   if(!canWrite()) return writeBlockedMessage();
   if(!file || !DOC_CATEGORIES[category]) return;
-  if(!(file.type==='application/pdf'||String(file.type||'').startsWith('image/'))){ toast('Solo se admiten PDF e imágenes'); return; }
+  const extension=String(file.name||'').split('.').pop().toLowerCase();
+  const inferredTypes={pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',bmp:'image/bmp',svg:'image/svg+xml'};
+  const detectedType=file.type||inferredTypes[extension]||'';
+  if(!(detectedType==='application/pdf'||detectedType.startsWith('image/'))){ toast('Solo se admiten PDF e imágenes'); return; }
   if(file.size>DOC_MAX_FILE_BYTES){ toast('El archivo supera el límite de 20 MB'); return; }
   try{
     const docs=await documentsList();
@@ -123,7 +144,8 @@ async function storeDocumentFile(file,category){
     const previous=cfg.single?await documentsGet(id):null;
     if(previous && !confirm(`Ya existe ${cfg.label}. Se reemplazará el archivo actual. ¿Continuar?`)) return;
     const now=new Date().toISOString();
-    await documentsPut({id,category,name:file.name,type:file.type||'application/octet-stream',size:file.size,createdAt:previous?.createdAt||now,updatedAt:now,blob:file});
+    const storedBlob=file.type?file:new Blob([file],{type:detectedType});
+    await documentsPut({id,category,name:file.name,type:detectedType,size:file.size,createdAt:previous?.createdAt||now,updatedAt:now,blob:storedBlob});
     toast(previous?'Documento reemplazado':'Documento guardado');
     renderDocumentsList();
   }catch(err){ console.error(err); toast('No se pudo guardar el documento'); }
@@ -150,7 +172,7 @@ async function renderPdfInsideApp(blob){
   const host=document.getElementById('document-viewer-host'); if(!host) return;
   try{
     const pdfjs=await import('../vendor/pdfjs/pdf.mjs');
-    pdfjs.GlobalWorkerOptions.workerSrc='../vendor/pdfjs/pdf.worker.mjs';
+    pdfjs.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdfjs/pdf.worker.mjs',document.baseURI).href;
     const data=new Uint8Array(await blob.arrayBuffer());
     const task=pdfjs.getDocument({data});
     const pdf=await task.promise;
@@ -184,7 +206,7 @@ async function renderPdfInsideApp(blob){
 function closeStoredDocumentViewer(){ document.getElementById('document-modal')?.remove(); if(documentsObjectUrl){URL.revokeObjectURL(documentsObjectUrl);documentsObjectUrl='';} }
 async function downloadStoredDocument(id){
   const d=await documentsGet(id); if(!d?.blob) return;
-  const u=URL.createObjectURL(d.blob),a=document.createElement('a'); a.href=u;a.download=d.name||'documento';a.click();setTimeout(()=>URL.revokeObjectURL(u),1500);
+  const u=URL.createObjectURL(d.blob),a=document.createElement('a'); a.href=u;a.download=safeFileName(d.name||'documento');a.click();setTimeout(()=>URL.revokeObjectURL(u),1500);
 }
 async function deleteStoredDocument(id){
   if(!canWrite()) return writeBlockedMessage();

@@ -2,6 +2,7 @@
   "name": "ProfeQr",
   "short_name": "ProfeQr",
   "description": "Centro de mando docente. Asistencia, trabajos, agenda, CTE, guardias y bitácora de incidencias.",
+  "id": "./",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

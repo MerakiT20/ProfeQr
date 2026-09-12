@@ -15,14 +15,14 @@ function renderCards(){
         <div class="cred-toptext">Maestro: ${esc(db.config.teacher)}</div>
         <div class="cred-toptext">Grupo: ${esc(db.config.group)}</div>
         <div class="cred-name">${esc(s.name)}</div>
-        <div class="qr-wrap"><div class="qr-box" id="qr-${s.id}"></div></div>
+        <div class="qr-wrap"><div class="qr-box" id="qr-${esc(s.id)}"></div></div>
         <div class="cred-meta">${esc(s.qr)}</div>
       </div>`).join('')}
   </div>`;
 }
 function bindCards(){
   document.getElementById('print-cards-btn').onclick = () => window.print();
-  db.group.students.forEach(s=>{
+  getActiveStudents().forEach(s=>{
     const el = document.getElementById(`qr-${s.id}`);
     if(el){
       el.innerHTML = '';
@@ -31,4 +31,3 @@ function bindCards(){
     }
   });
 }
-

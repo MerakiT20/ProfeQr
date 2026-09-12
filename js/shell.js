@@ -8,7 +8,7 @@ function showPinScreen(){
   const hasDraft=wizDraftExists();
   document.getElementById('root').innerHTML=`
   <div class="pin-wrap">
-    <img class="pin-logo" src="${db.config.logo||'./icons/icon-192.png'}" alt="logo"/>
+    <img class="pin-logo" src="${esc(safeImageSrc(db.config.logo))}" alt="logo"/>
     <div class="pin-title">ProfeQr</div>
     <div class="pin-sub">${esc(db.config.teacher||'')} &middot; ${esc(db.config.school||'')}</div>
     ${hasDraft?'<div class="pin-draft">\u{1F4DD} Tienes un reporte en progreso. Al entrar continuarás donde lo dejaste.</div>':''}
@@ -49,14 +49,14 @@ async function checkPin(){
   }
 }
 function renderHeader(title, subtitle, home=false){
-  const logo = db.config?.logo || './icons/icon-192.png';
+  const logo = safeImageSrc(db.config?.logo);
   return `
   <div class="header">
     <div class="header-row">
       <div style="display:flex;align-items:center;gap:10px">
         ${home ? '' : '<button class="icon-btn" id="back-btn">←</button>'}
         <div class="brand">
-          <img src="${logo}" alt="logo"/>
+          <img src="${esc(logo)}" alt="logo"/>
           <div>
             <div class="name">${esc(title)}</div>
             <div class="sub">${esc(subtitle || '')}</div>
@@ -95,7 +95,7 @@ function renderSetup(){
           <div><div class="small">Turno</div><select id="setup-shift"><option>Matutino</option><option selected>Vespertino</option></select></div>
           <div><div class="small">Grupo / Sección</div><select id="setup-section"></select></div>
           <div><div class="small">Grupo generado</div><input id="setup-group" readonly></div>
-          <div><div class="small">Logo de la escuela</div><input id="setup-logo" type="file" accept="image/*"></div>
+          <div><div class="small">Logo de la escuela</div><input id="setup-logo" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp"></div>
           <div><div class="small">PIN de acceso (4 digitos) *</div><div class="help">Candado de pantalla. No compartir datos sensibles por este medio.</div><input id="setup-pin" type="password" inputmode="numeric" maxlength="4" placeholder="...."></div>
           <div><div class="small">Confirmar PIN *</div><input id="setup-pin2" type="password" inputmode="numeric" maxlength="4" placeholder="...."></div>
           <button class="btn primary" id="setup-save">Guardar y entrar</button>
@@ -134,9 +134,15 @@ function bindSetup(){
   logoInput.onchange = e => {
     const file = e.target.files[0];
     if(!file) return;
+    const extension=String(file.name||'').split('.').pop().toLowerCase();
+    const logoTypes={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',bmp:'image/bmp'};
+    const detectedType=file.type||logoTypes[extension]||'';
+    if(!/^image\/(?:png|jpeg|gif|webp|bmp)$/i.test(detectedType)){ toast('El logo debe ser PNG, JPG, GIF, WebP o BMP'); e.target.value=''; return; }
+    if(file.size>LOGO_MAX_FILE_BYTES){ toast('El logo supera el límite de 2 MB'); e.target.value=''; return; }
     const r = new FileReader();
-    r.onload = ()=>{ logoData = r.result; logoPreview.src = logoData; };
-    r.readAsDataURL(file);
+    r.onload = ()=>{ const next=safeImageSrc(r.result,''); if(!next){ toast('No se pudo validar el logo'); return; } logoData=next; logoPreview.src=next; };
+    r.onerror = ()=>toast('No se pudo leer el logo');
+    r.readAsDataURL(file.type?file:new Blob([file],{type:detectedType}));
   };
 
   refreshGrades();
@@ -166,7 +172,7 @@ function bindSetup(){
       shift: shiftEl.value,
       section: sectionEl.value,
       group: groupEl.value,
-      logo: logoData,
+      logo: safeImageSrc(logoData,''),
       theme: 'professional',
       licenseLegacyGrandfathered: false
     };
@@ -294,5 +300,3 @@ function renderApp(){
   bindGlobal();
   renderCurrentScreen();
 }
-
-

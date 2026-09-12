@@ -1,23 +1,23 @@
 /* --- Acuerdos CTE --- */
 function normalizeCteAgreement(a={}){
-  const x = a && typeof a === 'object' ? {...a} : {};
-  x.id = x.id || uid();
+  const x = a && typeof a === 'object' && !Array.isArray(a) ? {...a} : {};
+  x.id = String(x.id || uid());
   x.type = CTE_TYPES.includes(x.type) ? x.type : 'CTE';
   x.responsibleType = CTE_RESPONSIBLE_TYPES.includes(x.responsibleType) ? x.responsibleType : 'Docente';
-  x.responsibleName = x.responsibleName || '';
-  x.description = x.description || '';
-  x.dueDate = x.dueDate || today();
+  x.responsibleName = String(x.responsibleName || '');
+  x.description = String(x.description || '');
+  x.dueDate = normalizeIsoDate(x.dueDate,today());
   x.priority = AGENDA_PRIORITIES.includes(x.priority) ? x.priority : 'media';
   x.status = CTE_STATUSES.includes(x.status) ? x.status : 'pendiente';
-  x.evidence = x.evidence || '';
+  x.evidence = String(x.evidence || '');
   x.autoAgenda = x.autoAgenda !== false;
-  x.agendaEventId = x.agendaEventId || '';
-  x.createdAt = x.createdAt || new Date().toISOString();
-  x.updatedAt = x.updatedAt || x.createdAt;
+  x.agendaEventId = x.agendaEventId===undefined||x.agendaEventId===null?'':String(x.agendaEventId);
+  x.createdAt = String(x.createdAt || new Date().toISOString());
+  x.updatedAt = String(x.updatedAt || x.createdAt);
   return x;
 }
-function ensureCte(){ db.group.cteAgreements = Array.isArray(db.group.cteAgreements) ? db.group.cteAgreements.map(normalizeCteAgreement) : [];
-  db.group.guardCommissions = Array.isArray(db.group.guardCommissions) ? db.group.guardCommissions.map(normalizeGuardCommission) : []; ensureAgenda(); }
+function ensureCte(){ db.group.cteAgreements = Array.isArray(db.group.cteAgreements) ? db.group.cteAgreements.filter(isRecordObject).map(normalizeCteAgreement) : [];
+  db.group.guardCommissions = Array.isArray(db.group.guardCommissions) ? db.group.guardCommissions.filter(isRecordObject).map(normalizeGuardCommission) : []; ensureAgenda(); }
 function cteStatusLabel(s){ return ({'pendiente':'Pendiente','en proceso':'En proceso','cumplido':'Cumplido','vencido':'Vencido'})[s] || s; }
 function cteEffectiveStatus(a){ const x=normalizeCteAgreement(a); if(x.status!=='cumplido' && x.dueDate < today()) return 'vencido'; return x.status; }
 function cteAgreementSummary(){ ensureCte(); const arr=db.group.cteAgreements.map(normalizeCteAgreement); return {total:arr.length, pendiente:arr.filter(a=>cteEffectiveStatus(a)==='pendiente').length, proceso:arr.filter(a=>cteEffectiveStatus(a)==='en proceso').length, cumplido:arr.filter(a=>cteEffectiveStatus(a)==='cumplido').length, vencido:arr.filter(a=>cteEffectiveStatus(a)==='vencido').length}; }
@@ -69,7 +69,7 @@ function renderCteForm(a){
     '<label class="check-line"><input id="cte-auto-agenda" type="checkbox" '+(ag.autoAgenda?'checked':'')+'> Crear/actualizar recordatorio automático en Agenda</label>'+ 
     '<div class="row row2"><button class="btn secondary" id="cte-cancel">'+(a?'Cancelar edición':'Limpiar')+'</button><button class="btn primary" id="cte-save">'+(a?'Guardar cambios':'Guardar acuerdo')+'</button></div></div></div>';
 }
-function renderCteItem(a){ const st=cteEffectiveStatus(a); return '<div class="cte-item '+agendaPriorityClass(a.priority)+' '+(st==='vencido'?'overdue':'')+'"><div class="agenda-icon">✅</div><div class="agenda-main"><b>'+esc(a.description||'(Sin descripción)')+'</b><div class="small">'+esc(a.type)+' · '+esc(cteStatusLabel(st))+' · vence '+esc(a.dueDate)+' · '+esc(agendaPriorityLabel(a.priority))+'</div><div class="help">Responsable: '+esc(a.responsibleType)+(a.responsibleName?' · '+esc(a.responsibleName):'')+(a.evidence?' · Evidencia/avance: '+esc(a.evidence):'')+'</div></div><div class="agenda-actions"><button class="mini" data-cte-edit="'+a.id+'">Editar</button>'+(st!=='cumplido'?'<button class="mini" data-cte-done="'+a.id+'">Cumplido</button>':'')+'<button class="mini" data-cte-delete="'+a.id+'">Eliminar</button></div></div>'; }
+function renderCteItem(a){ const st=cteEffectiveStatus(a); return '<div class="cte-item '+agendaPriorityClass(a.priority)+' '+(st==='vencido'?'overdue':'')+'"><div class="agenda-icon">✅</div><div class="agenda-main"><b>'+esc(a.description||'(Sin descripción)')+'</b><div class="small">'+esc(a.type)+' · '+esc(cteStatusLabel(st))+' · vence '+esc(a.dueDate)+' · '+esc(agendaPriorityLabel(a.priority))+'</div><div class="help">Responsable: '+esc(a.responsibleType)+(a.responsibleName?' · '+esc(a.responsibleName):'')+(a.evidence?' · Evidencia/avance: '+esc(a.evidence):'')+'</div></div><div class="agenda-actions"><button class="mini" data-cte-edit="'+esc(a.id)+'">Editar</button>'+(st!=='cumplido'?'<button class="mini" data-cte-done="'+esc(a.id)+'">Cumplido</button>':'')+'<button class="mini" data-cte-delete="'+esc(a.id)+'">Eliminar</button></div></div>'; }
 function bindCteAgreements(){
   bindMicButtons();
   document.getElementById('cte-quick-save')?.addEventListener('click',()=>{
@@ -92,11 +92,9 @@ function bindCteAgreements(){
     const idx=db.group.cteAgreements.findIndex(x=>x.id===ag.id); if(idx>=0) db.group.cteAgreements[idx]=ag; else db.group.cteAgreements.push(ag); syncCteAgendaEvent(ag); if(!saveDb()) return; cteEditingId=''; toast('Acuerdo CTE guardado'); renderCurrentScreen();
   });
   document.querySelectorAll('[data-cte-edit]').forEach(btn=>btn.onclick=()=>{ cteEditingId=btn.dataset.cteEdit; renderCurrentScreen(); });
-  document.querySelectorAll('[data-cte-done]').forEach(btn=>btn.onclick=()=>{ const a=db.group.cteAgreements.find(x=>x.id===btn.dataset.cteDone); if(a){ a.status='cumplido'; a.updatedAt=new Date().toISOString(); syncCteAgendaEvent(a); saveDb(); toast('Acuerdo marcado como cumplido'); renderCurrentScreen(); }});
-  document.querySelectorAll('[data-cte-delete]').forEach(btn=>btn.onclick=()=>{ if(!confirm('¿Eliminar este acuerdo CTE?')) return; const a=db.group.cteAgreements.find(x=>x.id===btn.dataset.cteDelete); if(a?.agendaEventId) db.group.agenda=db.group.agenda.filter(e=>e.id!==a.agendaEventId); db.group.cteAgreements=db.group.cteAgreements.filter(x=>x.id!==btn.dataset.cteDelete); saveDb(); toast('Acuerdo eliminado'); renderCurrentScreen(); });
+  document.querySelectorAll('[data-cte-done]').forEach(btn=>btn.onclick=()=>{ const a=db.group.cteAgreements.find(x=>x.id===btn.dataset.cteDone); if(a){ a.status='cumplido'; a.updatedAt=new Date().toISOString(); syncCteAgendaEvent(a); if(!saveDb())return; toast('Acuerdo marcado como cumplido'); renderCurrentScreen(); }});
+  document.querySelectorAll('[data-cte-delete]').forEach(btn=>btn.onclick=()=>{ if(!confirm('¿Eliminar este acuerdo CTE?')) return; const a=db.group.cteAgreements.find(x=>x.id===btn.dataset.cteDelete); if(a?.agendaEventId) db.group.agenda=db.group.agenda.filter(e=>e.id!==a.agendaEventId); db.group.cteAgreements=db.group.cteAgreements.filter(x=>x.id!==btn.dataset.cteDelete); if(!saveDb())return; toast('Acuerdo eliminado'); renderCurrentScreen(); });
   document.getElementById('cte-export-xlsx')?.addEventListener('click',exportCteExcel); document.getElementById('cte-export-json')?.addEventListener('click',exportCteJson);
 }
-function exportCteExcel(){ ensureCte(); const rows=db.group.cteAgreements.map(a=>({tipo:a.type,responsable_tipo:a.responsibleType,responsable:a.responsibleName,descripcion:a.description,fecha_compromiso:a.dueDate,prioridad:a.priority,estatus:cteEffectiveStatus(a),evidencia_avance:a.evidence,recordatorio_agenda:a.autoAgenda?'sí':'no',fecha_creacion:a.createdAt,fecha_actualizacion:a.updatedAt})); const wb=XLSX.utils.book_new(); const ws=XLSX.utils.json_to_sheet(rows); styleSheet(ws); XLSX.utils.book_append_sheet(wb,ws,'ACUERDOS_CTE'); XLSX.writeFile(wb,'ProfeQr_Acuerdos_CTE_'+today()+'.xlsx'); }
+function exportCteExcel(){ if(!checkXLSX()) return; ensureCte(); const rows=db.group.cteAgreements.map(a=>({tipo:a.type,responsable_tipo:a.responsibleType,responsable:a.responsibleName,descripcion:a.description,fecha_compromiso:a.dueDate,prioridad:a.priority,estatus:cteEffectiveStatus(a),evidencia_avance:a.evidence,recordatorio_agenda:a.autoAgenda?'sí':'no',fecha_creacion:a.createdAt,fecha_actualizacion:a.updatedAt})); const wb=XLSX.utils.book_new(); const ws=XLSX.utils.json_to_sheet(rows); styleSheet(ws); XLSX.utils.book_append_sheet(wb,ws,'ACUERDOS_CTE'); XLSX.writeFile(wb,'ProfeQr_Acuerdos_CTE_'+today()+'.xlsx'); }
 function exportCteJson(){ ensureCte(); downloadTextFile('ProfeQr_Acuerdos_CTE_'+today()+'.json', JSON.stringify({cteAgreements:db.group.cteAgreements,exportedAt:new Date().toISOString()},null,2), 'application/json;charset=utf-8'); }
-
-

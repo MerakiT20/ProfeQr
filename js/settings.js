@@ -19,8 +19,8 @@ function renderSettings(){
       <div><div class="small">Turno</div><select id="set-shift"><option ${form.shift==='Matutino'?'selected':''}>Matutino</option><option ${form.shift==='Vespertino'?'selected':''}>Vespertino</option></select></div>
       <div><div class="small">Grupo / Sección</div><select id="set-section"></select></div>
       <div><div class="small">Grupo generado</div><input id="set-group" readonly></div>
-      <div><div class="small">Logo</div><input id="set-logo" type="file" accept="image/*"></div>
-      <div id="set-logo-wrap">${form.logo?`<img src="${form.logo}" style="width:86px;height:86px;object-fit:contain;border-radius:18px">`:''}</div>
+      <div><div class="small">Logo</div><input id="set-logo" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,image/png,image/jpeg,image/gif,image/webp,image/bmp"></div>
+      <div id="set-logo-wrap">${form.logo?`<img src="${esc(safeImageSrc(form.logo,''))}" alt="Logo escolar" style="width:86px;height:86px;object-fit:contain;border-radius:18px">`:''}</div>
       <button class="btn primary" id="save-settings-btn">Guardar cambios</button>
     </div>
   </div>
@@ -79,7 +79,7 @@ function bindSettings(){
   const shiftEl = document.getElementById('set-shift');
   const sectionEl = document.getElementById('set-section');
   const groupEl = document.getElementById('set-group');
-  let logoData = db.config.logo || '';
+  let logoData = safeImageSrc(db.config.logo,'');
 
   function refreshGrades(){
     const grades = GRADES_BY_LEVEL[levelEl.value];
@@ -105,9 +105,15 @@ function bindSettings(){
   document.getElementById('set-logo').onchange = e => {
     const file = e.target.files[0];
     if(!file) return;
+    const extension=String(file.name||'').split('.').pop().toLowerCase();
+    const logoTypes={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',bmp:'image/bmp'};
+    const detectedType=file.type||logoTypes[extension]||'';
+    if(!/^image\/(?:png|jpeg|gif|webp|bmp)$/i.test(detectedType)){ toast('El logo debe ser PNG, JPG, GIF, WebP o BMP'); e.target.value=''; return; }
+    if(file.size>LOGO_MAX_FILE_BYTES){ toast('El logo supera el límite de 2 MB'); e.target.value=''; return; }
     const r = new FileReader();
-    r.onload = ()=>{ logoData = r.result; document.getElementById('set-logo-wrap').innerHTML = `<img src="${logoData}" style="width:86px;height:86px;object-fit:contain;border-radius:18px">`; };
-    r.readAsDataURL(file);
+    r.onload = ()=>{ const next=safeImageSrc(r.result,''); if(!next){ toast('No se pudo validar el logo'); return; } logoData=next; document.getElementById('set-logo-wrap').innerHTML = `<img src="${esc(logoData)}" alt="Logo escolar" style="width:86px;height:86px;object-fit:contain;border-radius:18px">`; };
+    r.onerror = ()=>toast('No se pudo leer el logo');
+    r.readAsDataURL(file.type?file:new Blob([file],{type:detectedType}));
   };
 
   document.getElementById('change-pin-btn')?.addEventListener('click',async ()=>{
@@ -165,7 +171,7 @@ function bindSettings(){
     db.config.shift = shiftEl.value;
     db.config.section = sectionEl.value;
     db.config.group = newGroup;
-    db.config.logo = logoData;
+    db.config.logo = safeImageSrc(logoData,'');
     db.group.name = db.config.group;
     db.group.level = db.config.level;
     db.group.grade = db.config.grade;
@@ -192,6 +198,4 @@ function bindSettings(){
     finally{ importInput.value=''; }
   };
 }
-
-
 

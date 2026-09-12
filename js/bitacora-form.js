@@ -1,34 +1,47 @@
 function bindBitacoraForm(){
   bindChoiceButtons(); bindMicButtons();
-  document.getElementById('bit-cancel').onclick=()=>{ if(confirm('¿Cancelar este reporte?')){ bitacoraDraft=null; currentScreen='bitacora'; renderCurrentScreen(); } };
+  document.getElementById('bit-cancel').onclick=()=>{ if(confirm('¿Cancelar este reporte?')){ wizDraftClear(); bitacoraDraft=null; currentScreen='bitacora'; renderCurrentScreen(); } };
   document.getElementById('bit-prev').onclick=()=>{ collectBitStep(); wizDraftSave(); if(bitacoraStep>0) bitacoraStep--; renderCurrentScreen(); };
   document.getElementById('bit-next').onclick=()=>{ collectBitStep(); if(!validateBitStep()) return; wizDraftSave(); const steps=BIT_STEPS[bitacoraDraft.type]||[]; if(bitacoraStep>=steps.length-1) return prepareBitPreview(); bitacoraStep++; renderCurrentScreen(); };
 }
+function collectMounted(target,key,id,reader=valOf){
+  if(document.getElementById(id)) target[key]=reader(id);
+}
+function collectMountedChecks(target,key,name){
+  if(document.querySelector(`input[name="${name}"]`)) target[key]=getChecks(name);
+}
 function collectCommon(){
-  const rep=valOf('bit-reporter'); if(rep) bitacoraDraft.reporter.name=rep;
-  const rr=getChoice('bit-reporter-role'); if(rr) bitacoraDraft.reporter.role=rr;
-  const src=getChoice('bit-reporter-source'); if(src) bitacoraDraft.reporter.source=src;
-  const bd=valOf('bit-date'); if(bd) bitacoraDraft.date=bd;
-  const bt=valOf('bit-time'); if(bt) bitacoraDraft.time=bt;
-  const ed=valOf('bit-event-date'); if(ed) bitacoraDraft.eventDate=ed;
-  const et=valOf('bit-event-time'); if(et) bitacoraDraft.eventTime=et;
+  bitacoraDraft.reporter=bitacoraDraft.reporter||{};
+  collectMounted(bitacoraDraft.reporter,'name','bit-reporter');
+  collectMounted(bitacoraDraft.reporter,'role','bit-reporter-role',getChoice);
+  collectMounted(bitacoraDraft.reporter,'source','bit-reporter-source',getChoice);
+  collectMounted(bitacoraDraft,'date','bit-date');
+  collectMounted(bitacoraDraft,'time','bit-time');
+  collectMounted(bitacoraDraft,'eventDate','bit-event-date');
+  collectMounted(bitacoraDraft,'eventTime','bit-event-time');
 }
 function collectBitStep(){
   if(!bitacoraDraft) return false; const d=bitacoraDraft.data||{}; collectCommon();
   if(bitacoraDraft.type==='A'){
-    Object.assign(d,{a_victim:valOf('a-victim')||d.a_victim,a_victim_role:getChoice('a-victim-role')||d.a_victim_role,a_aggressor:valOf('a-aggressor')||d.a_aggressor,a_aggressor_role:getChoice('a-aggressor-role')||d.a_aggressor_role,a_others:valOf('a-others')||d.a_others,a_subtype:getChoice('a-subtype')||d.a_subtype,a_severity:getChoice('a-severity')||d.a_severity,a_place:getChoice('a-place')||d.a_place,a_place_detail:valOf('a-place-detail')||d.a_place_detail,a_observed:valOf('a-observed')||d.a_observed,a_referred:valOf('a-referred')||d.a_referred,a_spontaneous:valOf('a-spontaneous')||d.a_spontaneous,a_witnesses:valOf('a-witnesses')||d.a_witnesses,a_evidence_detail:valOf('a-evidence-detail')||d.a_evidence_detail,a_protection:valOf('a-protection')||d.a_protection,a_notice_director:getChoice('a-notice-director')||d.a_notice_director,a_notice_tutor:getChoice('a-notice-tutor')||d.a_notice_tutor,a_notice_medium:getChoice('a-notice-medium')||d.a_notice_medium,a_notice_time:valOf('a-notice-time')||d.a_notice_time,a_tutor:valOf('a-tutor')||d.a_tutor,a_notice_notes:valOf('a-notice-notes')||d.a_notice_notes,a_channel_detail:valOf('a-channel-detail')||d.a_channel_detail,a_followup_date:valOf('a-followup-date')||d.a_followup_date,a_followup_responsible:valOf('a-followup-responsible')||d.a_followup_responsible,a_commitments:valOf('a-commitments')||d.a_commitments,a_notes:valOf('a-notes')||d.a_notes,a_status:getChoice('a-status')||d.a_status});
-    const risks=getChecks('a-risk'); if(risks.length) d.riskFlags=risks; const ev=getChecks('a-evidence'); if(ev.length) d.a_evidence=ev; const acts=getChecks('a-actions'); if(acts.length) d.a_actions=acts; const ch=getChecks('a-channel'); if(ch.length) d.a_channel=ch; bitacoraDraft.studentIds=[d.a_victim,d.a_aggressor].filter(Boolean);
+    [['a_victim','a-victim'],['a_aggressor','a-aggressor'],['a_others','a-others'],['a_place_detail','a-place-detail'],['a_observed','a-observed'],['a_referred','a-referred'],['a_spontaneous','a-spontaneous'],['a_witnesses','a-witnesses'],['a_evidence_detail','a-evidence-detail'],['a_protection','a-protection'],['a_notice_time','a-notice-time'],['a_tutor','a-tutor'],['a_notice_notes','a-notice-notes'],['a_channel_detail','a-channel-detail'],['a_followup_date','a-followup-date'],['a_followup_responsible','a-followup-responsible'],['a_commitments','a-commitments'],['a_notes','a-notes']].forEach(([key,id])=>collectMounted(d,key,id));
+    [['a_victim_role','a-victim-role'],['a_aggressor_role','a-aggressor-role'],['a_subtype','a-subtype'],['a_severity','a-severity'],['a_place','a-place'],['a_notice_director','a-notice-director'],['a_notice_tutor','a-notice-tutor'],['a_notice_medium','a-notice-medium'],['a_status','a-status']].forEach(([key,id])=>collectMounted(d,key,id,getChoice));
+    [['riskFlags','a-risk'],['a_evidence','a-evidence'],['a_actions','a-actions'],['a_channel','a-channel']].forEach(([key,name])=>collectMountedChecks(d,key,name));
+    bitacoraDraft.studentIds=[d.a_victim,d.a_aggressor].filter(Boolean);
   }
   if(bitacoraDraft.type==='B'){
-    Object.assign(d,{b_student:valOf('b-student')||d.b_student,b_place:getChoice('b-place')||d.b_place,b_subtype:getChoice('b-subtype')||d.b_subtype,b_conduct:valOf('b-conduct')||d.b_conduct,b_rule:valOf('b-rule')||d.b_rule,b_repeat:getChoice('b-repeat')||d.b_repeat,b_prior:valOf('b-prior')||d.b_prior,b_effect:valOf('b-effect')||d.b_effect,b_response:valOf('b-response')||d.b_response,b_intervention:valOf('b-intervention')||d.b_intervention,b_support:valOf('b-support')||d.b_support,b_measure:getChoice('b-measure')||d.b_measure,b_repair:valOf('b-repair')||d.b_repair,b_notice_tutor:getChoice('b-notice-tutor')||d.b_notice_tutor,b_commitment:valOf('b-commitment')||d.b_commitment,b_family:valOf('b-family')||d.b_family,b_followup_date:valOf('b-followup-date')||d.b_followup_date,b_followup_responsible:valOf('b-followup-responsible')||d.b_followup_responsible,b_status:getChoice('b-status')||d.b_status});
-    const escs=getChecks('b-escalate'); if(escs.length) d.b_escalate=escs; bitacoraDraft.studentIds=[d.b_student].filter(Boolean);
+    [['b_student','b-student'],['b_conduct','b-conduct'],['b_rule','b-rule'],['b_prior','b-prior'],['b_effect','b-effect'],['b_response','b-response'],['b_intervention','b-intervention'],['b_support','b-support'],['b_repair','b-repair'],['b_commitment','b-commitment'],['b_family','b-family'],['b_followup_date','b-followup-date'],['b_followup_responsible','b-followup-responsible']].forEach(([key,id])=>collectMounted(d,key,id));
+    [['b_place','b-place'],['b_subtype','b-subtype'],['b_repeat','b-repeat'],['b_measure','b-measure'],['b_notice_tutor','b-notice-tutor'],['b_status','b-status']].forEach(([key,id])=>collectMounted(d,key,id,getChoice));
+    collectMountedChecks(d,'b_escalate','b-escalate'); bitacoraDraft.studentIds=[d.b_student].filter(Boolean);
   }
   if(bitacoraDraft.type==='C'){
-    Object.assign(d,{c_student:valOf('c-student')||d.c_student,c_start:valOf('c-start')||d.c_start,c_end:valOf('c-end')||d.c_end,c_consecutive:getChoice('c-consecutive')||d.c_consecutive,c_justified:valOf('c-justified')||d.c_justified,c_manual:valOf('c-manual')||d.c_manual,c_contact_medium:getChoice('c-contact-medium')||d.c_contact_medium,c_tutor:valOf('c-tutor')||d.c_tutor,c_contact_date:valOf('c-contact-date')||d.c_contact_date,c_contact_response:valOf('c-contact-response')||d.c_contact_response,c_requires_cit:getChoice('c-requires-cit')||d.c_requires_cit,c_risk:getChoice('c-risk')||d.c_risk,c_pending_work:valOf('c-pending-work')||d.c_pending_work,c_agreement:valOf('c-agreement')||d.c_agreement,c_followup_date:valOf('c-followup-date')||d.c_followup_date,c_followup_responsible:valOf('c-followup-responsible')||d.c_followup_responsible,c_channel:getChoice('c-channel')||d.c_channel,c_status:getChoice('c-status')||d.c_status});
-    if(d.c_student&&d.c_start&&d.c_end) d.c_absences_auto=calculateAbsences(d.c_student,d.c_start,d.c_end); d.c_timeline=buildTimelineC(d); bitacoraDraft.studentIds=[d.c_student].filter(Boolean);
+    [['c_student','c-student'],['c_start','c-start'],['c_end','c-end'],['c_justified','c-justified'],['c_manual','c-manual'],['c_tutor','c-tutor'],['c_contact_date','c-contact-date'],['c_contact_response','c-contact-response'],['c_pending_work','c-pending-work'],['c_agreement','c-agreement'],['c_followup_date','c-followup-date'],['c_followup_responsible','c-followup-responsible']].forEach(([key,id])=>collectMounted(d,key,id));
+    [['c_consecutive','c-consecutive'],['c_contact_medium','c-contact-medium'],['c_requires_cit','c-requires-cit'],['c_risk','c-risk'],['c_channel','c-channel'],['c_status','c-status']].forEach(([key,id])=>collectMounted(d,key,id,getChoice));
+    d.c_absences_auto=d.c_student&&d.c_start&&d.c_end ? calculateAbsences(d.c_student,d.c_start,d.c_end) : [];
+    d.c_timeline=buildTimelineC(d); bitacoraDraft.studentIds=[d.c_student].filter(Boolean);
   }
   if(bitacoraDraft.type==='CIT'){
-    Object.assign(d,{cit_student:valOf('cit-student')||d.cit_student,cit_related:valOf('cit-related')||d.cit_related,cit_tutor:valOf('cit-tutor')||d.cit_tutor,cit_relation:getChoice('cit-relation')||d.cit_relation,cit_date:valOf('cit-date')||d.cit_date,cit_time:valOf('cit-time')||d.cit_time,cit_place:valOf('cit-place')||d.cit_place,cit_reason:getChoice('cit-reason')||d.cit_reason,cit_detail:valOf('cit-detail')||d.cit_detail,cit_medium:getChoice('cit-medium')||d.cit_medium,cit_delivered_by:valOf('cit-delivered-by')||d.cit_delivered_by,cit_ack:valOf('cit-ack')||d.cit_ack});
+    [['cit_student','cit-student'],['cit_related','cit-related'],['cit_tutor','cit-tutor'],['cit_date','cit-date'],['cit_time','cit-time'],['cit_place','cit-place'],['cit_detail','cit-detail'],['cit_delivered_by','cit-delivered-by'],['cit_ack','cit-ack']].forEach(([key,id])=>collectMounted(d,key,id));
+    [['cit_relation','cit-relation'],['cit_reason','cit-reason'],['cit_medium','cit-medium']].forEach(([key,id])=>collectMounted(d,key,id,getChoice));
     bitacoraDraft.studentIds=[d.cit_student].filter(Boolean); bitacoraDraft.date=d.cit_date||bitacoraDraft.date; bitacoraDraft.time=d.cit_time||bitacoraDraft.time;
   }
   bitacoraDraft.data=d; return true;
@@ -37,11 +50,11 @@ function validateBitStep(){
   const d=bitacoraDraft.data||{}, t=bitacoraDraft.type, s=bitacoraStep;
   if(t==='A'){ if(s===0&&!d.a_victim) return toast('Selecciona el alumno principal'),false; if(s===1&&(!d.a_subtype||!d.a_severity)) return toast('Selecciona tipo y gravedad'),false; if(s===3&&!d.a_place) return toast('Selecciona el lugar'),false; if(s===4&&!(d.a_observed||d.a_referred)) return toast('Captura hechos observados o referidos'),false; if(s===6&&!d.a_protection) return toast('Captura medida de protección'),false; if(s===7&&!d.a_notice_tutor) return toast('Registra notificación o intento de notificación'),false; }
   if(t==='B'){ if(s===0&&!d.b_student) return toast('Selecciona alumno'),false; if(s===1&&(!d.b_subtype||!d.b_conduct||!d.b_rule)) return toast('Captura tipo, conducta y norma incumplida'),false; if(s===3&&!d.b_intervention) return toast('Captura intervención docente'),false; if(s===4&&!d.b_measure) return toast('Selecciona medida formativa'),false; if(s===5&&(!d.b_commitment||!d.b_followup_date)) return toast('Captura compromiso y fecha de seguimiento'),false; }
-  if(t==='C'){ if(s===0&&!d.c_student) return toast('Selecciona alumno'),false; if(s===1&&(!d.c_start||!d.c_end)) return toast('Selecciona periodo'),false; if(s===3&&!d.c_contact_response) return toast('Captura contacto o intento de contacto'),false; if(s===4&&(!d.c_risk||!d.c_agreement)) return toast('Captura riesgo y acuerdos'),false; if(s===5&&!d.c_followup_date) return toast('Captura fecha de seguimiento'),false; }
+  if(t==='C'){ if(s===0&&!d.c_student) return toast('Selecciona alumno'),false; if(s===1&&(!d.c_start||!d.c_end)) return toast('Selecciona periodo'),false; if(s===1&&d.c_start>d.c_end) return toast('El inicio del periodo no puede ser posterior al fin'),false; if(s===3&&!d.c_contact_response) return toast('Captura contacto o intento de contacto'),false; if(s===4&&(!d.c_risk||!d.c_agreement)) return toast('Captura riesgo y acuerdos'),false; if(s===5&&!d.c_followup_date) return toast('Captura fecha de seguimiento'),false; }
   if(t==='CIT'){ if(s===0&&!d.cit_student) return toast('Selecciona alumno'),false; if(s===1&&!d.cit_tutor) return toast('Captura tutor'),false; if(s===2&&(!d.cit_date||!d.cit_time||!d.cit_place)) return toast('Completa fecha, hora y lugar'),false; if(s===3&&(!d.cit_reason||!d.cit_detail)) return toast('Captura motivo y detalle'),false; if(s===4&&!d.cit_medium) return toast('Selecciona medio de entrega'),false; }
   return true;
 }
-function prepareBitPreview(){ collectBitStep(); if(bitacoraDraft.status==='borrador') bitacoraDraft.status=bitacoraOperationalStatus(bitacoraDraft); refreshBitacoraComputedFields(bitacoraDraft); bitacoraDraft.documentText=buildBitacoraDocument(bitacoraDraft); currentScreen='bitacoraPreview'; renderCurrentScreen(); }
+function prepareBitPreview(){ collectBitStep(); if(buildReportStatus(bitacoraDraft)!=='cerrado') setBitacoraOperationalStatus(bitacoraDraft,bitacoraOperationalStatus(bitacoraDraft)); refreshBitacoraComputedFields(bitacoraDraft); bitacoraDraft.documentText=buildBitacoraDocument(bitacoraDraft); currentScreen='bitacoraPreview'; renderCurrentScreen(); }
 function valOf(id){ return (document.getElementById(id)?.value||'').trim(); }
 function instHeader(report=null){ const i=report?.institutional||buildBitacoraInstitutionalSnapshot(); return `Escuela: ${i.school||''}\nCCT: ${i.cct||''} · Grupo: ${i.group||''} · Turno: ${i.shift||''} · Ciclo: ${i.cycle||''}\nDocente que registra: ${i.teacher||''}\nDirector(a) o responsable: ${i.director||''}\nZona: ${i.zone||''} · Sector/Jefatura: ${i.sector||''}\nMunicipio: ${i.municipality||''}\nDomicilio: ${i.address||''}`; }
 function bitNA(v, fallback='No se registró al momento de elaboración.'){

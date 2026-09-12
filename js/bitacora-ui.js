@@ -1,7 +1,7 @@
 function bitacoraFilteredReports(){
   let reports=(db.group.bitacoraReports||[]).map(normalizeBitacoraReport).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   const f=bitacoraFilters||{};
-  if(f.student) reports=reports.filter(r=>(r.studentIds||[]).includes(f.student));
+  if(f.student) reports=reports.filter(r=>(r.studentIds||[]).some(id=>String(id)===String(f.student)));
   if(f.route) reports=reports.filter(r=>r.type===f.route);
   if(f.status) reports=reports.filter(r=>buildReportStatus(r)===f.status);
   if(f.light) reports=reports.filter(r=>buildReportTrafficLight(r)===f.light);
@@ -28,7 +28,7 @@ function renderBitacoraDashboard(reports){
 function renderBitacoraFilters(){
   return `<div class="card"><div class="section-title">Filtros de seguimiento</div>
     <div class="row row3">
-      <div><div class="small">Alumno</div><select id="bit-filter-student"><option value="">Todos</option>${(db.group.students||[]).map(s=>`<option value="${s.id}" ${bitacoraFilters.student===s.id?'selected':''}>${esc(s.listNo)} · ${esc(s.name)}</option>`).join('')}</select></div>
+      <div><div class="small">Alumno</div><select id="bit-filter-student"><option value="">Todos</option>${(db.group.students||[]).map(s=>`<option value="${esc(s.id)}" ${String(bitacoraFilters.student)===String(s.id)?'selected':''}>${esc(s.listNo)} · ${esc(s.name)}</option>`).join('')}</select></div>
       <div><div class="small">Ruta</div><select id="bit-filter-route"><option value="">Todas</option><option value="A" ${bitacoraFilters.route==='A'?'selected':''}>Ruta A</option><option value="B" ${bitacoraFilters.route==='B'?'selected':''}>Ruta B</option><option value="C" ${bitacoraFilters.route==='C'?'selected':''}>Ruta C</option><option value="CIT" ${bitacoraFilters.route==='CIT'?'selected':''}>Citatorio</option></select></div>
       <div><div class="small">Estatus</div><select id="bit-filter-status"><option value="">Todos</option>${['borrador','abierto','en seguimiento','canalizado','cerrado'].map(x=>`<option ${bitacoraFilters.status===x?'selected':''}>${x}</option>`).join('')}</select></div>
       <div><div class="small">Semáforo</div><select id="bit-filter-light"><option value="">Todos</option>${['gris','verde','amarillo','rojo'].map(x=>`<option ${bitacoraFilters.light===x?'selected':''}>${x}</option>`).join('')}</select></div>
@@ -59,25 +59,25 @@ function renderBitacoraRecent(reports){
   return reports.map(r=>`<div class="bit-report-card">
     <div class="bit-report-main">
       <div class="item-title">${esc(r.folio)} · ${esc(bitTypeName(r.type))}</div>
-      <div class="item-sub">${esc(r.date||'')} · ${(r.studentIds||[]).map(getStudentLabel).join('; ') || 'Sin alumno ligado'}</div>
+      <div class="item-sub">${esc(r.date||'')} · ${esc((r.studentIds||[]).map(getStudentLabel).join('; ') || 'Sin alumno ligado')}</div>
       <div class="item-sub">${renderTrafficBadge(r)} <span class="badge primary">${esc(buildReportStatus(r))}</span> Seguimiento: <b>${esc(getBitacoraFollowUpDate(r)||'sin fecha')}</b></div>
       <div class="help"><b>Próximo paso:</b> ${esc(bitacoraNextStep(r))}</div>
     </div>
     <div class="bit-report-actions">
-      <button class="mini" data-bit-open="${r.id}">Abrir</button>
-      <button class="mini" data-bit-pdf="${r.id}">PDF</button>
-      <button class="mini" data-bit-word="${r.id}">Word</button>
-      ${buildReportStatus(r)!=='cerrado'?`<button class="mini" data-bit-close="${r.id}" style="background:#DCFCE7;color:var(--ok)">Cerrar</button>`:''}
-      ${buildReportStatus(r)==='cerrado'?`<button class="mini" data-bit-reopen="${r.id}" style="background:#FEF3C7;color:var(--warn)">Reabrir</button>`:''}
+      <button class="mini" data-bit-open="${esc(r.id)}">Abrir</button>
+      <button class="mini" data-bit-pdf="${esc(r.id)}">PDF</button>
+      <button class="mini" data-bit-word="${esc(r.id)}">Word</button>
+      ${buildReportStatus(r)!=='cerrado'?`<button class="mini" data-bit-close="${esc(r.id)}" style="background:#DCFCE7;color:var(--ok)">Cerrar</button>`:''}
+      ${buildReportStatus(r)==='cerrado'?`<button class="mini" data-bit-reopen="${esc(r.id)}" style="background:#FEF3C7;color:var(--warn)">Reabrir</button>`:''}
     </div>
   </div>`).join('');
 }
 function renderBitacoraByStudent(){
-  return `<select id="bit-student-filter"><option value="">— Seleccionar alumno —</option>${(db.group.students||[]).map(s=>`<option value="${s.id}">${esc(s.listNo)} · ${esc(s.name)} (${bitacoraStudentReincidence(s.id)} reportes)</option>`).join('')}</select><div id="bit-student-detail" style="margin-top:12px" class="small">Selecciona un alumno para ver su ficha integral de bitácora.</div>`;
+  return `<select id="bit-student-filter"><option value="">— Seleccionar alumno —</option>${(db.group.students||[]).map(s=>`<option value="${esc(s.id)}">${esc(s.listNo)} · ${esc(s.name)} (${bitacoraStudentReincidence(s.id)} reportes)</option>`).join('')}</select><div id="bit-student-detail" style="margin-top:12px" class="small">Selecciona un alumno para ver su ficha integral de bitácora.</div>`;
 }
 function renderBitacoraStudentCard(studentId){
   const s=findStudent(studentId); if(!s) return 'Alumno no encontrado.';
-  const arr=(db.group.bitacoraReports||[]).map(normalizeBitacoraReport).filter(r=>(r.studentIds||[]).includes(studentId)).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const arr=(db.group.bitacoraReports||[]).map(normalizeBitacoraReport).filter(r=>(r.studentIds||[]).some(id=>String(id)===String(studentId))).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   const sum=bitacoraSummary(arr);
   return `<div class="kpi"><div class="item-title">${esc(s.name)}</div><div class="small">Lista ${esc(s.listNo)} · ${esc(s.qr||'')}</div></div>
     <div class="stats stats4" style="margin:10px 0">
@@ -94,35 +94,36 @@ function bindBitacora(){
   filterMap.forEach(([id,key])=>{ const el=document.getElementById(id); if(el) el.onchange=()=>{ bitacoraFilters[key]=el.value; renderCurrentScreen(); }; });
   const clear=document.getElementById('bit-clear-filters'); if(clear) clear.onclick=()=>{ bitacoraFilters={student:'',route:'',status:'',light:'',due:''}; renderCurrentScreen(); };
   document.querySelectorAll('[data-bit-open]').forEach(btn=>btn.onclick=()=>openBitacoraReport(btn.dataset.bitOpen));
-  document.querySelectorAll('[data-bit-pdf]').forEach(btn=>btn.onclick=()=>downloadBitacoraPdf((db.group.bitacoraReports||[]).find(r=>r.id===btn.dataset.bitPdf)));
-  document.querySelectorAll('[data-bit-word]').forEach(btn=>btn.onclick=()=>downloadBitacoraWord((db.group.bitacoraReports||[]).find(r=>r.id===btn.dataset.bitWord)));
+  document.querySelectorAll('[data-bit-pdf]').forEach(btn=>btn.onclick=()=>downloadBitacoraPdf((db.group.bitacoraReports||[]).find(r=>String(r.id)===String(btn.dataset.bitPdf))));
+  document.querySelectorAll('[data-bit-word]').forEach(btn=>btn.onclick=()=>downloadBitacoraWord((db.group.bitacoraReports||[]).find(r=>String(r.id)===String(btn.dataset.bitWord))));
   document.querySelectorAll('[data-bit-close]').forEach(btn=>btn.onclick=()=>changeBitacoraStatus(btn.dataset.bitClose,'cerrado'));
   document.querySelectorAll('[data-bit-reopen]').forEach(btn=>btn.onclick=()=>changeBitacoraStatus(btn.dataset.bitReopen,'en seguimiento'));
   const sel=document.getElementById('bit-student-filter'); if(sel) sel.onchange=()=>{ const detail=document.getElementById('bit-student-detail'); detail.innerHTML=sel.value?renderBitacoraStudentCard(sel.value):'Selecciona un alumno para ver su ficha integral de bitácora.'; bindBitacora(); };
 }
 function changeBitacoraStatus(id,status){
   if(!canWrite()) return writeBlockedMessage();
-  const r=(db.group.bitacoraReports||[]).find(x=>x.id===id); if(!r) return;
+  const r=(db.group.bitacoraReports||[]).find(x=>String(x.id)===String(id)); if(!r) return;
   const now=new Date().toISOString();
   if(status==='cerrado'){
     if(buildReportStatus(r)==='cerrado') return toast('El reporte ya está cerrado');
     if(!confirm('Al cerrar se conservará una versión inmutable. Para modificar después tendrás que reabrir y quedará registro. ¿Cerrar?')) return;
     if(!r.documentText) r.documentText=buildBitacoraDocument(r);
-    r.status='cerrado'; r.closedAt=now; r.updatedAt=now; r.trafficLight='verde';
+    setBitacoraOperationalStatus(r,'cerrado'); r.closedAt=now; r.updatedAt=now; r.trafficLight='verde';
     appendBitacoraVersion(r,'cierre'); appendBitacoraAudit(r,'cerrado','Versión final preservada');
     if(!saveDb()) return; toast('Reporte cerrado y versión preservada'); renderCurrentScreen(); return;
   }
   if(status==='en seguimiento'){
     if(buildReportStatus(r)!=='cerrado') return toast('El reporte no está cerrado');
     if(!confirm('Reabrir iniciará una nueva revisión y conservará intacta la versión cerrada. ¿Reabrir?')) return;
-    r.revision=(Number(r.revision)||1)+1; r.status='en seguimiento'; r.reopenedAt=now; r.closedAt=''; r.updatedAt=now; r.trafficLight=buildReportTrafficLight(r);
+    r.revision=(Number(r.revision)||1)+1; setBitacoraOperationalStatus(r,'en seguimiento'); r.reopenedAt=now; r.closedAt=''; r.updatedAt=now; r.trafficLight=buildReportTrafficLight(r);
     appendBitacoraAudit(r,'reabierto','Nueva revisión iniciada');
     if(!saveDb()) return; toast('Reporte reabierto como nueva revisión'); renderCurrentScreen();
   }
 }
 function startBitacora(type){
   if(!canWrite()) return writeBlockedMessage();
-  if(type!=='CIT' && getActiveStudents().length===0){ toast('Primero agrega alumnos al grupo'); currentScreen='students'; renderCurrentScreen(); return; }
+  if(!BIT_STEPS[type]) return toast('Tipo de reporte no válido');
+  if(getActiveStudents().length===0){ toast('Primero agrega alumnos al grupo'); currentScreen='students'; renderCurrentScreen(); return; }
   bitacoraStep=0;
   const createdAt=new Date().toISOString();
   bitacoraDraft={id:uid(),schemaVersion:3,folio:bitacoraFolio(),type,route:type,status:'borrador',trafficLight:'gris',revision:1,versions:[],auditTrail:[{at:createdAt,action:'creado',detail:'Borrador iniciado',revision:1}],closedAt:'',reopenedAt:'',createdAt,updatedAt:createdAt,date:today(),time:nowTime().slice(0,5),eventDate:today(),eventTime:nowTime().slice(0,5),institutional:buildBitacoraInstitutionalSnapshot(),reporter:{name:db.config?.teacher||'',role:'docente',source:'observación directa'},studentIds:[],data:{},followUp:{date:'',responsible:db.config?.teacher||'',notes:''},documentText:''};
@@ -152,13 +153,13 @@ function renderBitStepA(step,d){
   return commonStepCard('👁️','Previa','Se generará una vista previa editable antes de guardar.','<div class="alert-legal"><b>Revisión obligatoria</b><p>La acta incluirá encabezado, relatoría, evidencias, acciones, notificaciones, canalización, acuerdos, firmas y notas de privacidad/alcance.</p></div>');
 }
 function renderBitStepB(step,d){
-  if(step===0) return renderReporterFields(d)+commonStepCard('📋','Ruta B: alumno y datos base','No se usa lenguaje de víctima/agresor/receptor/generador.',`<div class="row row2"><div><div class="small">Alumno *</div><select id="b-student">${activeStudentOptions(d.b_student||'')}</select></div>${bitInput('bit-event-date','Fecha',bitacoraDraft.eventDate,'','date',true)}${bitInput('bit-event-time','Hora',bitacoraDraft.eventTime,'','time')}${bitChoice('b-place','Lugar',BIT_OPTS.lugares,d.b_place||'',true)}</div>`);
+  if(step===0) return renderReporterFields(d)+commonStepCard('📋','Ruta B: alumno y datos base','Usa descripciones observables, neutrales y formativas.',`<div class="row row2"><div><div class="small">Alumno *</div><select id="b-student">${activeStudentOptions(d.b_student||'')}</select></div>${bitInput('bit-event-date','Fecha',bitacoraDraft.eventDate,'','date',true)}${bitInput('bit-event-time','Hora',bitacoraDraft.eventTime,'','time')}${bitChoice('b-place','Lugar',BIT_OPTS.lugares,d.b_place||'',true)}</div>`);
   if(step===1) return commonStepCard('✍️','Conducta o incumplimiento','Describe conducta observable, no etiqueta personal.',`${bitChoice('b-subtype','Tipo de falta',BIT_OPTS.tiposB,d.b_subtype||'',true)}${bitText('b-conduct','Conducta observable',d.b_conduct||'','Qué hizo o dejó de hacer el alumno de forma observable.',true,4,true)}${bitText('b-rule','Norma, acuerdo o indicación incumplida',d.b_rule||'','Ej. acuerdo de clase, indicación docente, reglamento interno.',true,3,true)}${bitChecks('b-escalate','Indicadores que podrían escalar a Ruta A',BIT_OPTS.escalamientoB,d.b_escalate||[])}${shouldEscalateB(d.b_escalate)?'<div class="alert-legal red"><b>Se recomienda Ruta A</b><p>Esta situación no debe documentarse como simple indisciplina. Puedes continuar si es un registro formativo menor, pero considera escalar.</p></div>':''}`);
   if(step===2) return commonStepCard('🔎','Contexto y antecedentes','Registra reincidencia y afectación sin prejuzgar.',`${bitChoice('b-repeat','Reincidencia',BIT_OPTS.reincidencia,d.b_repeat||'',true)}${bitText('b-prior','Antecedentes relacionados',d.b_prior||'','Registros previos o intervenciones anteriores.',false,3,true)}${bitText('b-effect','Afectación al grupo o actividad',d.b_effect||'','Cómo afectó la clase, seguridad, aprendizaje o convivencia.',false,3,true)}${bitText('b-response','Respuesta del alumno',d.b_response||'','Qué manifestó o cómo reaccionó, sin interpretar.',false,3,true)}`);
   if(step===3) return commonStepCard('🧑‍🏫','Intervención docente','Documenta qué hizo el maestro antes de la medida.',`${bitText('b-intervention','Intervención previa del docente',d.b_intervention||'','Diálogo, indicación, reconducción, apoyo, mediación, etc.',true,4,true)}${bitText('b-support','Apoyo o seguimiento escolar',d.b_support||'','Apoyos acordados por docente o escuela.',false,3,true)}`);
   if(step===4) return commonStepCard('🧩','Medida formativa','La medida debe ser proporcional y educativa.',`${bitChoice('b-measure','Medida formativa aplicada',BIT_OPTS.medidasB,d.b_measure||'',true)}${bitText('b-repair','Reparación del daño, si aplica',d.b_repair||'','Acción concreta para reparar o compensar.',false,3,true)}${bitChoice('b-notice-tutor','Notificación a tutor', ['sí','no','no aplica'], d.b_notice_tutor||'no aplica')}`);
   if(step===5) return commonStepCard('✅','Compromisos y seguimiento','Define qué se revisará y cuándo.',`${bitText('b-commitment','Compromiso del alumno',d.b_commitment||'','Conducta o acción concreta que se compromete a realizar.',true,3,true)}${bitText('b-family','Compromiso familiar, si aplica',d.b_family||'','Acuerdo con madre, padre o tutor.',false,3,true)}<div class="row row2">${bitInput('b-followup-date','Fecha de seguimiento',d.b_followup_date||'','','date',true)}${bitInput('b-followup-responsible','Responsable',d.b_followup_responsible||db.config?.teacher||'','Nombre')}</div>${bitChoice('b-status','Estatus inicial',BIT_OPTS.estatus,d.b_status||'en seguimiento')}`);
-  return commonStepCard('👁️','Previa','Se generará una vista previa editable antes de guardar.','<div class="alert-legal"><b>Revisión obligatoria</b><p>La Ruta B mantendrá lenguaje formativo y no usará términos de violencia.</p></div>');
+  return commonStepCard('👁️','Previa','Se generará una vista previa editable antes de guardar.','<div class="alert-legal"><b>Revisión obligatoria</b><p>La Ruta B mantendrá lenguaje objetivo, proporcional y formativo.</p></div>');
 }
 function renderBitStepC(step,d){
   if(step===0) return renderReporterFields(d)+commonStepCard('📆','Ruta C: alumno','Usa asistencia ProfeQr para detectar faltas y documentar seguimiento.',`<div><div class="small">Alumno *</div><select id="c-student">${activeStudentOptions(d.c_student||'')}</select></div>`);

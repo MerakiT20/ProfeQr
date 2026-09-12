@@ -17,7 +17,12 @@ function blobToDataUrl(blob){
 function dataUrlToBlob(dataUrl){
   const m=String(dataUrl||'').match(/^data:([^;,]*)(?:;charset=[^;,]*)?;base64,(.*)$/s);
   if(!m) throw new Error('Documento codificado inválido');
-  const bin=atob(m[2]); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  const encoded=m[2].replace(/\s/g,'');
+  if(!/^[a-z0-9+/]*={0,2}$/i.test(encoded) || encoded.length%4===1) throw new Error('Documento codificado inválido');
+  const padding=(encoded.match(/=*$/)||[''])[0].length;
+  const estimatedBytes=Math.floor(encoded.length*3/4)-padding;
+  if(estimatedBytes>DOC_MAX_FILE_BYTES) throw new Error('El documento supera el límite de 20 MB');
+  const bin=atob(encoded); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
   return new Blob([bytes],{type:m[1]||'application/octet-stream'});
 }
 async function backupDocuments(){
@@ -60,10 +65,10 @@ async function exportProfeQrBackup(){
     toast(`Respaldo exportado · ${payload.data.documents.length} documento(s)`);
   }catch(err){ console.error(err); toast('No se pudo crear el respaldo integral'); }
 }
-function isLegacyBackupObject(obj){ return !!(obj && typeof obj==='object' && obj.group && Object.prototype.hasOwnProperty.call(obj,'config')); }
+function isLegacyBackupObject(obj){ return !!(isRecordObject(obj) && isRecordObject(obj.group) && Object.prototype.hasOwnProperty.call(obj,'config') && (obj.config===null||isRecordObject(obj.config))); }
 async function validateProfeQrBackup(obj){
   if(!obj || obj.format!==PROFEQR_BACKUP_FORMAT || ![1,2].includes(Number(obj.version))) return {ok:false,error:'Formato de respaldo no reconocido'};
-  if(!obj.data?.db) return {ok:false,error:'El respaldo no contiene base de datos'};
+  if(!isRecordObject(obj.data?.db) || !isRecordObject(obj.data.db.group) || !(obj.data.db.config===null||isRecordObject(obj.data.db.config))) return {ok:false,error:'El respaldo no contiene una base de datos válida'};
   if(obj.integrity?.digest){
     const copy=JSON.parse(JSON.stringify(obj)); delete copy.integrity;
     const digest=await sha256TextHex(JSON.stringify(copy));
@@ -72,17 +77,39 @@ async function validateProfeQrBackup(obj){
   if(Number(obj.version)>=2 && !Array.isArray(obj.data.documents)) return {ok:false,error:'El respaldo no contiene el índice de documentos'};
   return {ok:true};
 }
-async function restoreBackupDocuments(records){
-  if(!Array.isArray(records) || typeof documentsClear!=='function') return 0;
-  await documentsClear();
-  let restored=0;
-  for(const d of records){
-    if(!d?.id || !d?.dataUrl) continue;
-    const blob=dataUrlToBlob(d.dataUrl);
-    await documentsPut({id:d.id,category:d.category||'propios',name:d.name||'Documento',type:d.type||blob.type||'application/octet-stream',size:blob.size,createdAt:d.createdAt||new Date().toISOString(),updatedAt:d.updatedAt||new Date().toISOString(),blob});
-    restored++;
+function validPinHashConfig(config={}){
+  const iterations=Number(config.pinIterations);
+  return /^[a-f0-9]{64}$/i.test(String(config.pinHash||'')) && /^[a-f0-9]{32,128}$/i.test(String(config.pinSalt||'')) && Number.isInteger(iterations) && iterations>=100000 && iterations<=1000000;
+}
+function copyPinHash(target={},source={}){
+  delete target.pin; delete target.pinHash; delete target.pinSalt; delete target.pinIterations;
+  if(validPinHashConfig(source)){
+    target.pinHash=source.pinHash;
+    target.pinSalt=source.pinSalt;
+    target.pinIterations=Number(source.pinIterations);
   }
-  return restored;
+}
+function validBackupDraft(value){
+  return !!(value && typeof value==='object' && value.draft && typeof value.draft==='object' && ['A','B','C','CIT'].includes(value.draft.type));
+}
+function prepareBackupDocuments(records){
+  if(!Array.isArray(records)) throw new Error('El índice de documentos es inválido');
+  const ids=new Set();
+  return records.map(d=>{
+    if(!d || typeof d!=='object' || d.id===undefined || d.id===null || !d.dataUrl) throw new Error('El respaldo contiene un documento incompleto');
+    const id=String(d.id);
+    if(ids.has(id)) throw new Error(`El documento ${id} está repetido en el respaldo`);
+    ids.add(id);
+    const blob=dataUrlToBlob(d.dataUrl);
+    if(blob.size>DOC_MAX_FILE_BYTES) throw new Error(`El documento ${d.name||id} supera el límite de 20 MB`);
+    const now=new Date().toISOString();
+    return {id,category:DOC_CATEGORIES[d.category]?d.category:'propios',name:String(d.name||'Documento'),type:String(d.type||blob.type||'application/octet-stream'),size:blob.size,createdAt:d.createdAt||now,updatedAt:d.updatedAt||now,blob};
+  });
+}
+async function restoreBackupDocuments(records){
+  if(!Array.isArray(records) || typeof documentsReplaceAll!=='function') return 0;
+  const prepared=records.length && records[0]?.blob ? records : prepareBackupDocuments(records);
+  return documentsReplaceAll(prepared);
 }
 async function restoreProfeQrBackupObject(obj){
   let restoredDb,draft=null,legacy=false,documents=null;
@@ -93,18 +120,45 @@ async function restoreProfeQrBackupObject(obj){
     restoredDb=obj.data.db; draft=obj.data.bitacoraDraft||null;
     if(Number(obj.version)>=2) documents=obj.data.documents||[];
   }
-  // Preserve this device's activation and installation context.
-  const currentLicense=db?.config?.license ? JSON.parse(JSON.stringify(db.config.license)) : null;
-  db=safeDb(restoredDb);
-  if(db.config){ delete db.config.pin; if(currentLicense) db.config.license=currentLicense; else delete db.config.license; }
-  if(!saveDb({system:true})) throw new Error('No se pudo guardar el respaldo restaurado');
+  // Valida y decodifica todo antes de reemplazar datos. Un documento corrupto
+  // no debe borrar la biblioteca actual ni dejar una restauración parcial.
+  const preparedDocuments=documents===null?null:prepareBackupDocuments(documents);
+  const previousDb=JSON.parse(JSON.stringify(db));
+  let previousDraft=null;
+  try{ previousDraft=localStorage.getItem(DRAFT_KEY); }catch(e){}
+  const currentConfig=db?.config||{};
+  const currentLicense=currentConfig.license ? JSON.parse(JSON.stringify(currentConfig.license)) : null;
+  const currentLegacy=currentConfig.licenseLegacyGrandfathered===true;
+  const incomingConfig=restoredDb?.config||{};
+  const incomingLegacyPin=String(incomingConfig.pin||'');
+
   try{
-    if(draft) localStorage.setItem(DRAFT_KEY,JSON.stringify(draft));
-    else if(!legacy) localStorage.removeItem(DRAFT_KEY);
-  }catch(e){}
-  let documentCount=0;
-  if(documents!==null) documentCount=await restoreBackupDocuments(documents);
-  return {legacy,documentCount};
+    db=safeDb(JSON.parse(JSON.stringify(restoredDb)));
+    if(db.config){
+      delete db.config.license;
+      if(currentLicense) db.config.license=currentLicense;
+      db.config.licenseLegacyGrandfathered=currentLegacy;
+      if(validPinHashConfig(db.config)) delete db.config.pin;
+      else if(/^\d{4}$/.test(incomingLegacyPin)){
+        copyPinHash(db.config,{});
+        await setPinCredential(incomingLegacyPin);
+      }else copyPinHash(db.config,currentConfig);
+    }
+    if(!saveDb({system:true})) throw new Error('No se pudo guardar el respaldo restaurado');
+    if(!legacy){
+      if(validBackupDraft(draft)) localStorage.setItem(DRAFT_KEY,JSON.stringify(draft));
+      else localStorage.removeItem(DRAFT_KEY);
+    }
+    await refreshLicenseRuntime();
+    const documentCount=preparedDocuments===null?0:await restoreBackupDocuments(preparedDocuments);
+    return {legacy,documentCount};
+  }catch(err){
+    db=safeDb(previousDb);
+    saveDb({system:true});
+    try{ if(previousDraft===null) localStorage.removeItem(DRAFT_KEY); else localStorage.setItem(DRAFT_KEY,previousDraft); }catch(e){}
+    try{ await refreshLicenseRuntime(); }catch(e){}
+    throw err;
+  }
 }
 async function importProfeQrBackupFile(file){
   const text=await file.text();
