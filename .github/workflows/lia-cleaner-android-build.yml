@@ -1,0 +1,63 @@
+name: LIA Cleaner Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/lia-cleaner-kotlin
+    paths:
+      - 'lia-cleaner-kotlin/**'
+      - '.github/workflows/lia-cleaner-android-build.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'lia-cleaner-kotlin/**'
+      - '.github/workflows/lia-cleaner-android-build.yml'
+
+concurrency:
+  group: lia-cleaner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-lia-cleaner:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lia-cleaner-kotlin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Bundle ImageEmbedder model
+        run: |
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 3 \
+            --output app/src/main/assets/mobilenet_v3_small.tflite \
+            https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/latest/mobilenet_v3_small.tflite
+          test -s app/src/main/assets/mobilenet_v3_small.tflite
+
+      - name: Run unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest
+
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lia-cleaner-debug-apk
+          path: lia-cleaner-kotlin/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
