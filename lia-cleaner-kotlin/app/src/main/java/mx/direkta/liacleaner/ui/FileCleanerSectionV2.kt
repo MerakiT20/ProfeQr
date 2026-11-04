@@ -56,6 +56,8 @@ import mx.direkta.liacleaner.file.DuplicateFileGroup
 import mx.direkta.liacleaner.file.FileCleanerAnalyzer
 import mx.direkta.liacleaner.file.FileScanSession
 import mx.direkta.liacleaner.file.FileSortMode
+import mx.direkta.liacleaner.file.VersionFamily
+import mx.direkta.liacleaner.file.VersionFamilyAnalyzer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -128,6 +130,7 @@ fun FileCleanerSectionV2() {
 
         session.result?.let { result ->
             val groups = result.duplicateGroups
+            val versionFamilies = remember(result.files) { VersionFamilyAnalyzer.findFamilies(result.files) }
             val allDuplicateCopies = groups.flatMap { g -> g.files.filter { it.file.absolutePath != g.keep.file.absolutePath } }.distinctBy { it.file.absolutePath }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,7 +155,13 @@ fun FileCleanerSectionV2() {
                 FileMode.entries.forEach { item { FilterChip(mode == it, { mode = it; limit = 30 }, label = { Text(it.label) }) } }
             }
 
-            if (mode == FileMode.DUPLICATES) {
+            if (mode == FileMode.VERSIONS) {
+                VersionCleanupSection(
+                    families = versionFamilies,
+                    deleting = session.deleting,
+                    onDelete = { title, items -> askDelete(title, items) }
+                )
+            } else if (mode == FileMode.DUPLICATES) {
                 groups.take(limit).forEach { group ->
                     DuplicateFileCard(group) {
                         askDelete("¿Conservar 1 y eliminar las copias?", group.files.filter { it.file.absolutePath != group.keep.file.absolutePath })
@@ -220,13 +229,140 @@ private fun ScanProgressCard(title: String, subtitle: String, progress: Float, d
     }
 }
 
+@Composable
+private fun VersionCleanupSection(
+    families: List<VersionFamily>,
+    deleting: Boolean,
+    onDelete: (String, List<CleanerFileItem>) -> Unit
+) {
+    if (families.isEmpty()) {
+        Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Versiones anteriores", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    "No se detectaron familias claras de versiones. LIA solo agrupa nombres con patrones reconocibles como v1/v2, (1)/(2), fechas o copias.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        return
+    }
+
+    val removeKeepingOne = families.flatMap { it.removableKeeping(1) }.distinctBy { it.file.absolutePath }
+    val removeKeepingThree = families.flatMap { it.removableKeeping(3) }.distinctBy { it.file.absolutePath }
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = .08f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Versiones anteriores", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text(
+                "${families.size} familias detectadas. Revisa antes de borrar: versiones no significa contenido idéntico.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (removeKeepingOne.isNotEmpty()) {
+                Button(
+                    onClick = {
+                        onDelete(
+                            "¿Conservar solo la versión más reciente?",
+                            removeKeepingOne
+                        )
+                    },
+                    enabled = !deleting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Conservar solo la última · borrar ${removeKeepingOne.size}")
+                }
+            }
+            if (removeKeepingThree.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = {
+                        onDelete(
+                            "¿Conservar las últimas 3 versiones?",
+                            removeKeepingThree
+                        )
+                    },
+                    enabled = !deleting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Conservar últimas 3 · borrar ${removeKeepingThree.size}")
+                }
+            }
+        }
+    }
+
+    families.take(30).forEach { family ->
+        VersionFamilyCard(family, deleting, onDelete)
+    }
+    if (families.size > 30) {
+        Text(
+            "Mostrando las 30 familias con mayor espacio recuperable.",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun VersionFamilyCard(
+    family: VersionFamily,
+    deleting: Boolean,
+    onDelete: (String, List<CleanerFileItem>) -> Unit
+) {
+    val removeOne = family.removableKeeping(1)
+    val removeThree = family.removableKeeping(3)
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(family.displayName, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(
+                "${family.files.size} versiones · ${fmtBytes(removeOne.sumOf { it.sizeBytes })} potencialmente liberables",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.secondary
+            )
+            family.files.take(5).forEachIndexed { index, item ->
+                Text(
+                    (if (index == 0) "✓ " else "• ") + item.name + " · " + fmtBytes(item.sizeBytes),
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    color = if (index == 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (family.files.size > 5) {
+                Text("+${family.files.size - 5} versiones más", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (removeOne.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = { onDelete("¿Conservar solo " + family.latest.name + "?", removeOne) },
+                        enabled = !deleting,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Solo última", fontSize = 10.sp) }
+                }
+                if (removeThree.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = { onDelete("¿Conservar las últimas 3 de " + family.displayName + "?", removeThree) },
+                        enabled = !deleting,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Últimas 3", fontSize = 10.sp) }
+                }
+            }
+        }
+    }
+}
+
 @Composable private fun ModernInfoCard(title: String, subtitle: String, content: @Composable () -> Unit) { Card(shape = RoundedCornerShape(20.dp)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, fontWeight = FontWeight.Bold); Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); content() } } }
 @Composable private fun MiniStat(title: String, value: String, modifier: Modifier) { Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .35f), RoundedCornerShape(14.dp)).padding(10.dp)) { Column { Text(value, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1); Text(title, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
 @Composable private fun DuplicateFileCard(group: DuplicateFileGroup, onDelete: () -> Unit) { Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .25f))) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { Text("${group.files.size} copias · ${fmtBytes(group.recoverableBytes)} recuperables", fontWeight = FontWeight.SemiBold); Text("Conservar: ${group.keep.name}", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary); group.files.take(3).forEach { Text("• ${it.name}", fontSize = 10.sp, maxLines = 1) }; OutlinedButton(onDelete, Modifier.fillMaxWidth()) { Text("Conservar 1 y eliminar copias") } } } }
 @Composable private fun FileItemCard(file: CleanerFileItem, selected: Boolean, onToggle: () -> Unit, onDelete: () -> Unit) { Card(shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Description, null, tint = MaterialTheme.colorScheme.primary); Column(Modifier.weight(1f).padding(horizontal = 10.dp)) { Text(file.name, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1); Text("${fmtBytes(file.sizeBytes)} · ${fmtDate(file.bestDateMs)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }; IconButton(onClick = onToggle) { Icon(if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, if (selected) "Seleccionado" else "Seleccionar", tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }; IconButton(onClick = onDelete) { Icon(Icons.Default.DeleteOutline, "Eliminar") } } } }
 
-private enum class FileMode(val label: String) { LARGE("Grandes"), DOWNLOADS("Descargas"), ALL("Todos"), DUPLICATES("Duplicados") }
-private fun filterFilesV2(source: List<CleanerFileItem>, mode: FileMode, minSize: Long, minAge: Int, kind: CleanerFileKind?, sort: FileSortMode): List<CleanerFileItem> { val now = System.currentTimeMillis(); val age = minAge * 86400000L; val f = source.filter { when (mode) { FileMode.DOWNLOADS -> it.isDownload; FileMode.LARGE -> it.sizeBytes >= 100L * MB; FileMode.ALL -> true; FileMode.DUPLICATES -> false } }.filter { it.sizeBytes >= minSize }.filter { minAge == 0 || (it.bestDateMs > 0 && now - it.bestDateMs >= age) }.filter { kind == null || it.kind == kind }; return when (sort) { FileSortMode.SIZE -> f.sortedByDescending { it.sizeBytes }; FileSortMode.DATE -> f.sortedBy { it.bestDateMs.takeIf { x -> x > 0 } ?: Long.MAX_VALUE }; FileSortMode.NAME -> f.sortedBy { it.name.lowercase() } } }
+private enum class FileMode(val label: String) { LARGE("Grandes"), DOWNLOADS("Descargas"), ALL("Todos"), DUPLICATES("Duplicados"), VERSIONS("Versiones") }
+private fun filterFilesV2(source: List<CleanerFileItem>, mode: FileMode, minSize: Long, minAge: Int, kind: CleanerFileKind?, sort: FileSortMode): List<CleanerFileItem> { val now = System.currentTimeMillis(); val age = minAge * 86400000L; val f = source.filter { when (mode) { FileMode.DOWNLOADS -> it.isDownload; FileMode.LARGE -> it.sizeBytes >= 100L * MB; FileMode.ALL -> true; FileMode.DUPLICATES -> false; FileMode.VERSIONS -> false } }.filter { it.sizeBytes >= minSize }.filter { minAge == 0 || (it.bestDateMs > 0 && now - it.bestDateMs >= age) }.filter { kind == null || it.kind == kind }; return when (sort) { FileSortMode.SIZE -> f.sortedByDescending { it.sizeBytes }; FileSortMode.DATE -> f.sortedBy { it.bestDateMs.takeIf { x -> x > 0 } ?: Long.MAX_VALUE }; FileSortMode.NAME -> f.sortedBy { it.name.lowercase() } } }
 private fun kindLabel(k: CleanerFileKind) = when (k) { CleanerFileKind.IMAGE -> "Imágenes"; CleanerFileKind.VIDEO -> "Videos"; CleanerFileKind.AUDIO -> "Audio"; CleanerFileKind.DOCUMENT -> "Documentos"; CleanerFileKind.ARCHIVE -> "Comprimidos"; CleanerFileKind.APK -> "APK"; CleanerFileKind.OTHER -> "Otros" }
 private fun sortLabel(s: FileSortMode) = when (s) { FileSortMode.SIZE -> "Tamaño"; FileSortMode.DATE -> "Fecha"; FileSortMode.NAME -> "Nombre" }
 private fun fmtBytes(bytes: Long): String { if (bytes < 1024) return "$bytes B"; val kb = bytes / 1024.0; if (kb < 1024) return String.format(Locale.getDefault(), "%.0f KB", kb); val mb = kb / 1024.0; if (mb < 1024) return String.format(Locale.getDefault(), "%.1f MB", mb); return String.format(Locale.getDefault(), "%.2f GB", mb / 1024.0) }
