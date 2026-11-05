@@ -1,18 +1,29 @@
 package mx.direkta.liacleaner.file
 
+import android.content.pm.PackageManager
+import android.os.Build
 import java.io.File
 import java.util.Locale
+
+data class VersionMetadata(
+    val packageName: String? = null,
+    val versionName: String? = null,
+    val versionCode: Long? = null,
+    val dateMs: Long = 0L
+)
 
 data class VersionFamily(
     val key: String,
     val displayName: String,
     val extension: String,
-    val files: List<CleanerFileItem>
+    val files: List<CleanerFileItem>,
+    val metadataByPath: Map<String, VersionMetadata> = emptyMap()
 ) {
     val latest: CleanerFileItem get() = files.first()
     val removableKeepingOne: List<CleanerFileItem> get() = files.drop(1)
     fun removableKeeping(count: Int): List<CleanerFileItem> = files.drop(count.coerceAtLeast(1))
     val removableBytesKeepingOne: Long get() = removableKeepingOne.sumOf { it.sizeBytes }
+    fun metadata(file: CleanerFileItem): VersionMetadata? = metadataByPath[file.file.absolutePath]
 }
 
 object VersionFamilyAnalyzer {
@@ -22,13 +33,17 @@ object VersionFamilyAnalyzer {
         val extension: String,
         val versionParts: List<Int>?,
         val copyNumber: Int?,
-        val dateNumber: Long?
+        val dateNumber: Long?,
+        val apkMeta: VersionMetadata?
     )
 
-    fun findFamilies(files: List<CleanerFileItem>): List<VersionFamily> {
+    fun findFamilies(
+        files: List<CleanerFileItem>,
+        packageManager: PackageManager? = null
+    ): List<VersionFamily> {
         return files
             .filter { it.kind in setOf(CleanerFileKind.DOCUMENT, CleanerFileKind.ARCHIVE, CleanerFileKind.APK, CleanerFileKind.OTHER) }
-            .mapNotNull { item -> parse(item.file)?.let { parsed -> Triple(parsed.familyKey, parsed, item) } }
+            .mapNotNull { item -> parse(item, packageManager)?.let { parsed -> Triple(parsed.familyKey, parsed, item) } }
             .groupBy { it.first }
             .values
             .mapNotNull { entries ->
@@ -39,7 +54,12 @@ object VersionFamilyAnalyzer {
                     key = entries.first().first,
                     displayName = parsed.displayName,
                     extension = parsed.extension,
-                    files = sorted.map { it.third }
+                    files = sorted.map { it.third },
+                    metadataByPath = entries.associate { entry ->
+                        entry.third.file.absolutePath to (
+                            entry.second.apkMeta ?: VersionMetadata(dateMs = entry.third.bestDateMs)
+                        )
+                    }
                 )
             }
             .filter { family ->
@@ -48,10 +68,28 @@ object VersionFamilyAnalyzer {
             .sortedByDescending { it.removableBytesKeepingOne }
     }
 
-    private fun parse(file: File): Parsed? {
+    private fun parse(item: CleanerFileItem, packageManager: PackageManager?): Parsed? {
+        val file = item.file
         val name = file.name
         val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         if (ext.isBlank()) return null
+
+        if (ext == "apk" && packageManager != null) {
+            readApkMetadata(file, packageManager)?.let { meta ->
+                val appLabel = readApkLabel(file, packageManager) ?: meta.packageName.orEmpty()
+                val family = meta.packageName?.takeIf { it.isNotBlank() } ?: return@let
+                return Parsed(
+                    familyKey = "apk:$family",
+                    displayName = appLabel.ifBlank { name.substringBeforeLast('.') },
+                    extension = ext,
+                    versionParts = meta.versionName?.split(Regex("""[^0-9]+"""))?.mapNotNull { it.toIntOrNull() }?.takeIf { it.isNotEmpty() },
+                    copyNumber = null,
+                    dateNumber = null,
+                    apkMeta = meta.copy(dateMs = item.bestDateMs)
+                )
+            }
+        }
+
         var stem = name.substringBeforeLast('.').trim()
         if (stem.length < 3) return null
 
@@ -87,8 +125,7 @@ object VersionFamilyAnalyzer {
             break
         }
 
-        if (!recognized) return null
-        if (stem.length < 3) return null
+        if (!recognized || stem.length < 3) return null
 
         val normalized = stem
             .lowercase(Locale.ROOT)
@@ -103,11 +140,56 @@ object VersionFamilyAnalyzer {
             extension = ext,
             versionParts = version,
             copyNumber = copyNumber,
-            dateNumber = dateNumber
+            dateNumber = dateNumber,
+            apkMeta = null
         )
     }
 
+    @Suppress("DEPRECATION")
+    private fun readApkMetadata(file: File, packageManager: PackageManager): VersionMetadata? {
+        val info = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageArchiveInfo(file.absolutePath, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            }
+        }.getOrNull() ?: return null
+
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+        return VersionMetadata(
+            packageName = info.packageName,
+            versionName = info.versionName,
+            versionCode = versionCode,
+            dateMs = file.lastModified()
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun readApkLabel(file: File, packageManager: PackageManager): String? {
+        val info = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageArchiveInfo(
+                    file.absolutePath,
+                    PackageManager.PackageInfoFlags.of(PackageManager.GET_META_DATA.toLong())
+                )
+            } else {
+                packageManager.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_META_DATA)
+            }
+        }.getOrNull() ?: return null
+        val appInfo = info.applicationInfo ?: return null
+        appInfo.sourceDir = file.absolutePath
+        appInfo.publicSourceDir = file.absolutePath
+        return runCatching { packageManager.getApplicationLabel(appInfo).toString() }.getOrNull()
+    }
+
     private fun compareEntries(aParsed: Parsed, a: CleanerFileItem, bParsed: Parsed, b: CleanerFileItem): Int {
+        val aApk = aParsed.apkMeta
+        val bApk = bParsed.apkMeta
+        if (aApk != null || bApk != null) {
+            val av = aApk?.versionCode ?: Long.MIN_VALUE
+            val bv = bApk?.versionCode ?: Long.MIN_VALUE
+            if (av != bv) return av.compareTo(bv)
+        }
         compareVersionParts(aParsed.versionParts, bParsed.versionParts).takeIf { it != 0 }?.let { return it }
         val aDate = aParsed.dateNumber ?: Long.MIN_VALUE
         val bDate = bParsed.dateNumber ?: Long.MIN_VALUE
