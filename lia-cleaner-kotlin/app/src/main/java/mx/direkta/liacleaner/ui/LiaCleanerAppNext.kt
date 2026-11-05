@@ -1,5 +1,8 @@
 package mx.direkta.liacleaner.ui
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
@@ -28,9 +32,12 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -226,10 +233,44 @@ private fun NextAppsScreen(
     apps: List<AppCandidate>, loading: Boolean, onRefresh: () -> Unit,
     onAction: (String) -> Unit, onSettings: () -> Unit
 ) {
+    val context = LocalContext.current
     var sort by remember { mutableStateOf(NextSort.INACTIVITY) }
     var onlyCandidates by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<AppCandidate?>(null) }
+    var bulkPending by remember { mutableStateOf<List<AppCandidate>>(emptyList()) }
+    var selectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var uninstallQueue by remember { mutableStateOf<List<String>>(emptyList()) }
+    var uninstallCurrent by remember { mutableStateOf<String?>(null) }
+    var uninstallMessage by remember { mutableStateOf<String?>(null) }
+
+    val uninstallLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val finished = uninstallCurrent
+        if (result.resultCode == Activity.RESULT_OK && finished != null) {
+            selectedPackages = selectedPackages - finished
+            uninstallMessage = "Desinstalada. Continuando con la siguiente…"
+        } else if (finished != null) {
+            uninstallMessage = "Se omitió una app. Continuando con la siguiente…"
+        }
+        uninstallQueue = if (uninstallQueue.isNotEmpty()) uninstallQueue.drop(1) else emptyList()
+        uninstallCurrent = null
+        onRefresh()
+    }
+
+    LaunchedEffect(uninstallQueue, uninstallCurrent) {
+        if (uninstallCurrent == null && uninstallQueue.isNotEmpty()) {
+            val packageName = uninstallQueue.first()
+            uninstallCurrent = packageName
+            val intent = Intent(Intent.ACTION_UNINSTALL_PACKAGE).apply {
+                data = Uri.parse("package:$packageName")
+                putExtra(Intent.EXTRA_RETURN_RESULT, true)
+            }
+            uninstallLauncher.launch(intent)
+        } else if (uninstallCurrent == null && uninstallQueue.isEmpty() && uninstallMessage != null) {
+            uninstallMessage = "Cola de desinstalación terminada."
+        }
+    }
+
     val shown = remember(apps, sort, onlyCandidates, query) {
         val f = apps.filter { (!onlyCandidates || it.recommendation == Recommendation.REMOVE) && (query.isBlank() || it.name.contains(query, true)) }
         when (sort) {
@@ -239,15 +280,42 @@ private fun NextAppsScreen(
             NextSort.NAME -> f.sortedBy { it.name.lowercase() }
         }
     }
+
     pending?.let { app ->
         AlertDialog(
             onDismissRequest = { pending = null },
             title = { Text(if (app.isSystemComponent) "Abrir ${app.name}" else "Desinstalar ${app.name}?") },
             text = { Text(if (app.isSystemComponent) "Es un componente protegido; LIA abrirá su ficha de Android." else "Android pedirá la confirmación final.") },
-            confirmButton = { TextButton(onClick = { pending = null; onAction(app.packageName) }) { Text(if (app.isSystemComponent) "Abrir" else "Desinstalar") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    pending = null
+                    if (app.isSystemComponent) onAction(app.packageName)
+                    else {
+                        uninstallQueue = listOf(app.packageName)
+                        uninstallMessage = "Iniciando desinstalación…"
+                    }
+                }) { Text(if (app.isSystemComponent) "Abrir" else "Desinstalar") }
+            },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancelar") } }
         )
     }
+
+    if (bulkPending.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { bulkPending = emptyList() },
+            title = { Text("¿Desinstalar ${bulkPending.size} aplicaciones?") },
+            text = { Text("Android pedirá confirmación una por una. LIA abrirá automáticamente la siguiente aplicación al terminar cada confirmación.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    uninstallQueue = bulkPending.map { it.packageName }
+                    uninstallMessage = "Iniciando cola de ${bulkPending.size} aplicaciones…"
+                    bulkPending = emptyList()
+                }) { Text("Iniciar") }
+            },
+            dismissButton = { TextButton(onClick = { bulkPending = emptyList() }) { Text("Cancelar") } }
+        )
+    }
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Spacer(Modifier.height(12.dp)) }
         item { ScreenHeader("Aplicaciones", "${apps.size} instaladas", onSettings) }
@@ -266,11 +334,51 @@ private fun NextAppsScreen(
                 item { FilterChip(sort == NextSort.NAME, { sort = NextSort.NAME }, label = { Text("Nombre") }) }
             }
         }
+        if (selectedPackages.isNotEmpty()) {
+            item {
+                val selectedApps = apps.filter { it.packageName in selectedPackages && !it.isSystemComponent }
+                Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = .08f))) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("${selectedApps.size} apps seleccionadas", fontWeight = FontWeight.SemiBold)
+                        Text(nextBytes(selectedApps.mapNotNull { it.sizeBytes }.sum()), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(
+                            onClick = { bulkPending = selectedApps },
+                            enabled = uninstallQueue.isEmpty() && uninstallCurrent == null,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Desinstalar seleccionadas") }
+                        TextButton(onClick = { selectedPackages = emptySet() }) { Text("Cancelar selección") }
+                    }
+                }
+            }
+        }
+        uninstallMessage?.let { message ->
+            item { Text(message, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary) }
+        }
         item { Text("${shown.size} resultados", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         if (loading) item { Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         items(shown, key = { it.packageName }) { app ->
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            val selectable = !app.isSystemComponent
+            val selected = app.packageName in selectedPackages
+            Card(
+                onClick = {
+                    if (selectable) {
+                        selectedPackages = if (selected) selectedPackages - app.packageName else selectedPackages + app.packageName
+                    } else pending = app
+                },
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (selected) MaterialTheme.colorScheme.secondary.copy(alpha = .08f) else MaterialTheme.colorScheme.surface
+                )
+            ) {
                 Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (selectable) {
+                        Icon(
+                            if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = if (selected) "Seleccionada" else "Seleccionar",
+                            tint = if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.size(8.dp))
+                    }
                     NextAppIcon(app.packageName)
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(app.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
