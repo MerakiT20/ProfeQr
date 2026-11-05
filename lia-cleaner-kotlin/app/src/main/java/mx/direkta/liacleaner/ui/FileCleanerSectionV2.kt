@@ -130,7 +130,7 @@ fun FileCleanerSectionV2() {
 
         session.result?.let { result ->
             val groups = result.duplicateGroups
-            val versionFamilies = remember(result.files) { VersionFamilyAnalyzer.findFamilies(result.files) }
+            val versionFamilies = remember(result.files) { VersionFamilyAnalyzer.findFamilies(result.files, context.packageManager) }
             val allDuplicateCopies = groups.flatMap { g -> g.files.filter { it.file.absolutePath != g.keep.file.absolutePath } }.distinctBy { it.file.absolutePath }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -326,10 +326,16 @@ private fun VersionFamilyCard(
                 color = MaterialTheme.colorScheme.secondary
             )
             family.files.take(5).forEachIndexed { index, item ->
+                val meta = family.metadata(item)
+                val versionText = when {
+                    meta?.versionName != null && meta.versionCode != null -> " · v${meta.versionName} (#${meta.versionCode})"
+                    meta?.versionCode != null -> " · versión #${meta.versionCode}"
+                    else -> ""
+                }
                 Text(
-                    (if (index == 0) "✓ " else "• ") + item.name + " · " + fmtBytes(item.sizeBytes),
+                    (if (index == 0) "✓ " else "• ") + item.name + versionText + " · " + fmtBytes(item.sizeBytes) + " · " + fmtDate(item.bestDateMs),
                     fontSize = 10.sp,
-                    maxLines = 1,
+                    maxLines = 2,
                     color = if (index == 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
