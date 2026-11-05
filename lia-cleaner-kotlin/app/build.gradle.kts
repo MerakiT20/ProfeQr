@@ -14,14 +14,26 @@ android {
         applicationId = "mx.direkta.liacleaner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.14.0"
+        versionCode = 15
+        versionName = "0.14.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        create("liaDebug") {
+            storeFile = file("../lia-cleaner-debug.keystore")
+            storePassword = "lia-cleaner-debug"
+            keyAlias = "lia_cleaner"
+            keyPassword = "lia-cleaner-debug"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("liaDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
